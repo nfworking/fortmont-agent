@@ -25,12 +25,12 @@ import (
 )
 
 type Agent struct {
-    cfg     config.Config
-    store   identity.Store
-    creds   identity.Credentials
+    cfg config.Config
+    store identity.Store
+    creds identity.Credentials
     private ed25519.PrivateKey
-    public  ed25519.PublicKey
-    log     *slog.Logger
+    public ed25519.PublicKey
+    log *slog.Logger
     writeMu sync.Mutex
 }
 
@@ -44,12 +44,9 @@ func New(cfg config.Config, log *slog.Logger) (*Agent, error) {
 func (a *Agent) Run(ctx context.Context, enrollmentToken string) error {
     backoff := time.Second
     failedGateways := make(map[string]struct{})
-
     a.log.Info("agent connection manager started", "gateway_count", len(a.cfg.WSNodes), "agent_id", a.creds.AgentID, "device_id", a.creds.DeviceID)
-
     for {
         if ctx.Err() != nil { return nil }
-
         selected, candidates, err := gateway.SelectFastestExcluding(ctx, a.cfg.WSNodes, failedGateways, a.cfg.ConnectTimeout)
         a.logGatewaySelection(selected, candidates)
         if err != nil {
@@ -58,19 +55,12 @@ func (a *Agent) Run(ctx context.Context, enrollmentToken string) error {
             backoff = minDuration(backoff*2, a.cfg.ReconnectMax)
             continue
         }
-
         a.log.Info("attempting WebSocket connection", "gateway", selected)
         err = a.connectAndRun(ctx, selected, enrollmentToken)
         if err == nil || ctx.Err() != nil { return nil }
-
         failedGateways[selected] = struct{}{}
         a.log.Warn("gateway connection ended; failing over", "gateway", selected, "error", err, "failed_gateway_count", len(failedGateways))
-
-        // Enrollment is a one-time bootstrap credential. Once a registration
-        // attempt has reached a gateway, do not blindly reuse it on failover.
-        // A successfully enrolled agent uses its Ed25519 identity instead.
         enrollmentToken = ""
-
         if !sleepContext(ctx, backoff) { return nil }
         backoff = minDuration(backoff*2, a.cfg.ReconnectMax)
         if len(failedGateways) >= len(a.cfg.WSNodes) {
@@ -83,13 +73,11 @@ func (a *Agent) Run(ctx context.Context, enrollmentToken string) error {
 func (a *Agent) connectAndRun(ctx context.Context, wsURL, enrollmentToken string) error {
     parsed, err := url.Parse(wsURL)
     if err != nil { return err }
-
     a.log.Info("connecting to WebSocket gateway", "gateway", wsURL)
     dialer := websocket.Dialer{HandshakeTimeout: a.cfg.ConnectTimeout}
     conn, _, err := dialer.DialContext(ctx, parsed.String(), nil)
     if err != nil { return fmt.Errorf("connect %s: %w", wsURL, err) }
     defer conn.Close()
-
     a.log.Info("WebSocket connection established", "gateway", wsURL)
     conn.SetReadLimit(1024 * 1024)
     _ = conn.SetReadDeadline(time.Now().Add(a.cfg.ConnectTimeout))
@@ -119,9 +107,12 @@ func (a *Agent) connectAndRun(ctx context.Context, wsURL, enrollmentToken string
     health := time.NewTicker(a.cfg.GatewayHealthInterval)
     defer health.Stop()
 
+    metricsCtx, metricsCancel := context.WithCancel(ctx)
+    defer metricsCancel()
+    go a.runMetricsLoop(metricsCtx, conn)
+
     readCh := make(chan readResult, 1)
     go readLoop(conn, readCh, a.cfg.PingInterval*2)
-
     for {
         select {
         case <-ctx.Done(): return nil
@@ -146,14 +137,8 @@ func (a *Agent) connectAndRun(ctx context.Context, wsURL, enrollmentToken string
 }
 
 type readResult struct { raw []byte; err error }
-
 func readLoop(conn *websocket.Conn, resultCh chan<- readResult, timeout time.Duration) {
-    for {
-        _ = conn.SetReadDeadline(time.Now().Add(timeout))
-        _, raw, err := conn.ReadMessage()
-        resultCh <- readResult{raw: raw, err: err}
-        if err != nil { return }
-    }
+    for { _ = conn.SetReadDeadline(time.Now().Add(timeout)); _, raw, err := conn.ReadMessage(); resultCh <- readResult{raw: raw, err: err}; if err != nil { return } }
 }
 
 func (a *Agent) finishHandshake(conn *websocket.Conn) error {
@@ -167,8 +152,7 @@ func (a *Agent) finishHandshake(conn *websocket.Conn) error {
             var complete protocol.RegistrationComplete
             if err := json.Unmarshal(env.Data, &complete); err != nil { return err }
             if complete.AgentID == "" || complete.KeyID == "" { return errors.New("gateway returned incomplete registration") }
-            a.creds.AgentID = complete.AgentID
-            a.creds.KeyID = complete.KeyID
+            a.creds.AgentID, a.creds.KeyID = complete.AgentID, complete.KeyID
             if err := a.store.Save(a.creds); err != nil { return err }
             _ = os.Remove(a.cfg.EnrollmentTokenPath)
             a.log.Info("agent enrollment completed", "agent_id", complete.AgentID, "key_id", complete.KeyID)
@@ -205,49 +189,20 @@ func (a *Agent) registration(token string) protocol.RegisterRequest {
     hostname, _ := os.Hostname()
     return protocol.RegisterRequest{EnrollmentToken: token, PublicKey: base64.RawURLEncoding.EncodeToString(a.public), DeviceID: a.creds.DeviceID, Hostname: hostname, LocalIP: localIP(), PublicIP: strings.TrimSpace(os.Getenv("FORTMONT_PUBLIC_IP")), Platform: runtime.GOOS, Architecture: runtime.GOARCH, Version: a.cfg.Version}
 }
-
 func (a *Agent) heartbeat(now time.Time) protocol.Heartbeat {
     hostname, _ := os.Hostname()
     return protocol.Heartbeat{Timestamp: now.Format(time.RFC3339Nano), Hostname: hostname, LocalIP: localIP(), PublicIP: strings.TrimSpace(os.Getenv("FORTMONT_PUBLIC_IP")), Platform: runtime.GOOS, Architecture: runtime.GOARCH, Version: a.cfg.Version}
 }
-
 func (a *Agent) send(conn *websocket.Conn, typ string, data any) error {
-    message, err := protocol.MarshalMessage(typ, data)
-    if err != nil { return err }
-    a.writeMu.Lock()
-    defer a.writeMu.Unlock()
-    _ = conn.SetWriteDeadline(time.Now().Add(a.cfg.ConnectTimeout))
-    return conn.WriteMessage(websocket.TextMessage, message)
+    message, err := protocol.MarshalMessage(typ, data); if err != nil { return err }
+    a.writeMu.Lock(); defer a.writeMu.Unlock(); _ = conn.SetWriteDeadline(time.Now().Add(a.cfg.ConnectTimeout)); return conn.WriteMessage(websocket.TextMessage, message)
 }
-
 func (a *Agent) logGatewaySelection(selected string, candidates []gateway.Candidate) {
     fields := make([]string, 0, len(candidates))
-    for _, candidate := range candidates {
-        if candidate.Err != nil {
-            fields = append(fields, fmt.Sprintf("%s failed: %v", candidate.URL, candidate.Err))
-            continue
-        }
-        fields = append(fields, fmt.Sprintf("%s %s", candidate.URL, candidate.Latency))
-    }
-    if selected == "" {
-        a.log.Warn("no usable WebSocket gateway selected", "candidates", fields)
-        return
-    }
+    for _, candidate := range candidates { if candidate.Err != nil { fields = append(fields, fmt.Sprintf("%s failed: %v", candidate.URL, candidate.Err)); continue }; fields = append(fields, fmt.Sprintf("%s %s", candidate.URL, candidate.Latency)) }
+    if selected == "" { a.log.Warn("no usable WebSocket gateway selected", "candidates", fields); return }
     a.log.Info("selected fastest WebSocket gateway", "url", selected, "candidates", fields)
 }
-
-func localIP() string {
-    conn, err := net.Dial("udp", "1.1.1.1:53")
-    if err != nil { return "" }
-    defer conn.Close()
-    if address, ok := conn.LocalAddr().(*net.UDPAddr); ok { return address.IP.String() }
-    return ""
-}
-
-func sleepContext(ctx context.Context, duration time.Duration) bool {
-    timer := time.NewTimer(duration)
-    defer timer.Stop()
-    select { case <-ctx.Done(): return false; case <-timer.C: return true }
-}
-
+func localIP() string { conn, err := net.Dial("udp", "1.1.1.1:53"); if err != nil { return "" }; defer conn.Close(); if address, ok := conn.LocalAddr().(*net.UDPAddr); ok { return address.IP.String() }; return "" }
+func sleepContext(ctx context.Context, duration time.Duration) bool { timer := time.NewTimer(duration); defer timer.Stop(); select { case <-ctx.Done(): return false; case <-timer.C: return true } }
 func minDuration(a, b time.Duration) time.Duration { if a < b { return a }; return b }
