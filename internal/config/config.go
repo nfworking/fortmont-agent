@@ -27,44 +27,29 @@ type Config struct {
 func Load() (Config, error) {
     _ = loadDotEnv(".env")
 
+    dir := os.Getenv("FORTMONT_CONFIG_DIR")
+    if dir == "" { dir = defaultConfigDir() }
+    // Managed services do not inherit an interactive shell's working directory.
+    // Load the service environment from the protected config directory as well.
+    _ = loadDotEnv(filepath.Join(dir, "service.env"))
+
     nodes := splitCSV(os.Getenv("FORTMONT_WS_NODES"))
-    if len(nodes) == 0 {
-        return Config{}, errors.New("FORTMONT_WS_NODES is required")
-    }
+    if len(nodes) == 0 { return Config{}, errors.New("FORTMONT_WS_NODES is required") }
     for _, node := range nodes {
         if !strings.HasPrefix(node, "ws://") && !strings.HasPrefix(node, "wss://") {
             return Config{}, fmt.Errorf("invalid WebSocket node %q: must use ws:// or wss://", node)
         }
     }
 
-    dir := os.Getenv("FORTMONT_CONFIG_DIR")
-    if dir == "" { dir = defaultConfigDir() }
     version := os.Getenv("FORTMONT_VERSION")
     if version == "" { version = "dev" }
+    connectTimeout, err := seconds("FORTMONT_CONNECT_TIMEOUT_SEC", 10); if err != nil { return Config{}, err }
+    reconnectMax, err := seconds("FORTMONT_RECONNECT_MAX_SEC", 30); if err != nil { return Config{}, err }
+    heartbeat, err := seconds("FORTMONT_HEARTBEAT_SEC", 30); if err != nil { return Config{}, err }
+    ping, err := seconds("FORTMONT_PING_INTERVAL_SEC", 10); if err != nil { return Config{}, err }
+    health, err := seconds("FORTMONT_GATEWAY_HEALTH_CHECK_SEC", 5); if err != nil { return Config{}, err }
 
-    connectTimeout, err := seconds("FORTMONT_CONNECT_TIMEOUT_SEC", 10)
-    if err != nil { return Config{}, err }
-    reconnectMax, err := seconds("FORTMONT_RECONNECT_MAX_SEC", 30)
-    if err != nil { return Config{}, err }
-    heartbeat, err := seconds("FORTMONT_HEARTBEAT_SEC", 30)
-    if err != nil { return Config{}, err }
-    ping, err := seconds("FORTMONT_PING_INTERVAL_SEC", 10)
-    if err != nil { return Config{}, err }
-    health, err := seconds("FORTMONT_GATEWAY_HEALTH_CHECK_SEC", 5)
-    if err != nil { return Config{}, err }
-
-    return Config{
-        WSNodes: nodes,
-        ConfigDir: dir,
-        CredentialsPath: filepath.Join(dir, "credentials.json"),
-        EnrollmentTokenPath: filepath.Join(dir, "enrollment-token"),
-        Version: version,
-        ConnectTimeout: connectTimeout,
-        ReconnectMax: reconnectMax,
-        HeartbeatInterval: heartbeat,
-        PingInterval: ping,
-        GatewayHealthInterval: health,
-    }, nil
+    return Config{WSNodes: nodes, ConfigDir: dir, CredentialsPath: filepath.Join(dir, "credentials.json"), EnrollmentTokenPath: filepath.Join(dir, "enrollment-token"), Version: version, ConnectTimeout: connectTimeout, ReconnectMax: reconnectMax, HeartbeatInterval: heartbeat, PingInterval: ping, GatewayHealthInterval: health}, nil
 }
 
 func ReadEnrollmentToken(path string) (string, error) {
@@ -99,7 +84,6 @@ func loadDotEnv(path string) error {
     file, err := os.Open(path)
     if err != nil { return err }
     defer file.Close()
-
     scanner := bufio.NewScanner(file)
     for scanner.Scan() {
         line := strings.TrimSpace(scanner.Text())
@@ -107,14 +91,9 @@ func loadDotEnv(path string) error {
         if strings.HasPrefix(line, "export ") { line = strings.TrimSpace(strings.TrimPrefix(line, "export ")) }
         key, value, ok := strings.Cut(line, "=")
         if !ok { continue }
-        key = strings.TrimSpace(key)
-        value = strings.TrimSpace(value)
-        if len(value) >= 2 && ((value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'')) {
-            value = value[1 : len(value)-1]
-        }
-        if key != "" {
-            if _, exists := os.LookupEnv(key); !exists { _ = os.Setenv(key, value) }
-        }
+        key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+        if len(value) >= 2 && ((value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'')) { value = value[1 : len(value)-1] }
+        if key != "" { if _, exists := os.LookupEnv(key); !exists { _ = os.Setenv(key, value) } }
     }
     return scanner.Err()
 }
