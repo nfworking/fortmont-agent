@@ -45,29 +45,38 @@ func (a *Agent) Run(ctx context.Context, enrollmentToken string) error {
     backoff := time.Second
     failedGateways := make(map[string]struct{})
 
+    a.log.Info("agent connection manager started", "gateway_count", len(a.cfg.WSNodes), "agent_id", a.creds.AgentID, "device_id", a.creds.DeviceID)
+
     for {
         if ctx.Err() != nil { return nil }
 
         selected, candidates, err := gateway.SelectFastestExcluding(ctx, a.cfg.WSNodes, failedGateways, a.cfg.ConnectTimeout)
+        a.logGatewaySelection(selected, candidates)
         if err != nil {
-            a.log.Warn("no gateway reachable", "error", err)
+            a.log.Warn("no WebSocket gateway reachable", "error", err)
             if !sleepContext(ctx, backoff) { return nil }
             backoff = minDuration(backoff*2, a.cfg.ReconnectMax)
             continue
         }
-        a.logGatewaySelection(selected, candidates)
 
+        a.log.Info("attempting WebSocket connection", "gateway", selected)
         err = a.connectAndRun(ctx, selected, enrollmentToken)
         if err == nil || ctx.Err() != nil { return nil }
 
         failedGateways[selected] = struct{}{}
-        a.log.Warn("gateway connection ended; failing over", "gateway", selected, "error", err)
+        a.log.Warn("gateway connection ended; failing over", "gateway", selected, "error", err, "failed_gateway_count", len(failedGateways))
 
+        // Enrollment is a one-time bootstrap credential. Once a registration
+        // attempt has reached a gateway, do not blindly reuse it on failover.
+        // A successfully enrolled agent uses its Ed25519 identity instead.
         enrollmentToken = ""
 
         if !sleepContext(ctx, backoff) { return nil }
         backoff = minDuration(backoff*2, a.cfg.ReconnectMax)
-        if len(failedGateways) >= len(a.cfg.WSNodes) { failedGateways = make(map[string]struct{}) }
+        if len(failedGateways) >= len(a.cfg.WSNodes) {
+            a.log.Info("all configured gateways failed; retrying the full gateway pool")
+            failedGateways = make(map[string]struct{})
+        }
     }
 }
 
@@ -212,8 +221,18 @@ func (a *Agent) send(conn *websocket.Conn, typ string, data any) error {
 }
 
 func (a *Agent) logGatewaySelection(selected string, candidates []gateway.Candidate) {
-    fields := make([]any, 0, len(candidates)*2)
-    for _, candidate := range candidates { fields = append(fields, candidate.URL, candidate.Latency.String()) }
+    fields := make([]string, 0, len(candidates))
+    for _, candidate := range candidates {
+        if candidate.Err != nil {
+            fields = append(fields, fmt.Sprintf("%s failed: %v", candidate.URL, candidate.Err))
+            continue
+        }
+        fields = append(fields, fmt.Sprintf("%s %s", candidate.URL, candidate.Latency))
+    }
+    if selected == "" {
+        a.log.Warn("no usable WebSocket gateway selected", "candidates", fields)
+        return
+    }
     a.log.Info("selected fastest WebSocket gateway", "url", selected, "candidates", fields)
 }
 
