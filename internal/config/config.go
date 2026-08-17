@@ -12,14 +12,15 @@ import (
 )
 
 type Config struct {
-    WSNodes           []string
-    ConfigDir         string
-    CredentialsPath   string
-    Version           string
-    ConnectTimeout    time.Duration
-    ReconnectMax      time.Duration
-    HeartbeatInterval time.Duration
-    PingInterval      time.Duration
+    WSNodes              []string
+    ConfigDir            string
+    CredentialsPath      string
+    Version              string
+    ConnectTimeout       time.Duration
+    ReconnectMax         time.Duration
+    HeartbeatInterval    time.Duration
+    PingInterval         time.Duration
+    GatewayHealthInterval time.Duration
 }
 
 func Load() (Config, error) {
@@ -36,13 +37,9 @@ func Load() (Config, error) {
     }
 
     dir := os.Getenv("FORTMONT_CONFIG_DIR")
-    if dir == "" {
-        dir = defaultConfigDir()
-    }
+    if dir == "" { dir = defaultConfigDir() }
     version := os.Getenv("FORTMONT_VERSION")
-    if version == "" {
-        version = "dev"
-    }
+    if version == "" { version = "dev" }
 
     connectTimeout, err := seconds("FORTMONT_CONNECT_TIMEOUT_SEC", 10)
     if err != nil { return Config{}, err }
@@ -50,7 +47,9 @@ func Load() (Config, error) {
     if err != nil { return Config{}, err }
     heartbeat, err := seconds("FORTMONT_HEARTBEAT_SEC", 30)
     if err != nil { return Config{}, err }
-    ping, err := seconds("FORTMONT_PING_INTERVAL_SEC", 30)
+    ping, err := seconds("FORTMONT_PING_INTERVAL_SEC", 10)
+    if err != nil { return Config{}, err }
+    health, err := seconds("FORTMONT_GATEWAY_HEALTH_CHECK_SEC", 5)
     if err != nil { return Config{}, err }
 
     return Config{
@@ -62,6 +61,7 @@ func Load() (Config, error) {
         ReconnectMax: reconnectMax,
         HeartbeatInterval: heartbeat,
         PingInterval: ping,
+        GatewayHealthInterval: health,
     }, nil
 }
 
@@ -69,9 +69,7 @@ func seconds(key string, fallback int) (time.Duration, error) {
     raw := os.Getenv(key)
     if raw == "" { return time.Duration(fallback) * time.Second, nil }
     value, err := strconv.Atoi(raw)
-    if err != nil || value <= 0 {
-        return 0, fmt.Errorf("%s must be a positive integer", key)
-    }
+    if err != nil || value <= 0 { return 0, fmt.Errorf("%s must be a positive integer", key) }
     return time.Duration(value) * time.Second, nil
 }
 
@@ -85,15 +83,10 @@ func splitCSV(raw string) []string {
 }
 
 func defaultConfigDir() string {
-    if dir, err := os.UserConfigDir(); err == nil {
-        return filepath.Join(dir, "Fortmont", "Agent")
-    }
+    if dir, err := os.UserConfigDir(); err == nil { return filepath.Join(dir, "Fortmont", "Agent") }
     return "./data"
 }
 
-// loadDotEnv intentionally supports the small .env format needed by the agent
-// without adding a runtime dependency. Existing process environment variables
-// always win over values from .env.
 func loadDotEnv(path string) error {
     file, err := os.Open(path)
     if err != nil { return err }
