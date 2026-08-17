@@ -25,13 +25,13 @@ import (
 )
 
 type Agent struct {
-    cfg       config.Config
-    store     identity.Store
-    creds     identity.Credentials
-    private   ed25519.PrivateKey
-    public    ed25519.PublicKey
-    log       *slog.Logger
-    writeMu   sync.Mutex
+    cfg     config.Config
+    store   identity.Store
+    creds   identity.Credentials
+    private ed25519.PrivateKey
+    public  ed25519.PublicKey
+    log     *slog.Logger
+    writeMu sync.Mutex
 }
 
 func New(cfg config.Config, log *slog.Logger) (*Agent, error) {
@@ -43,19 +43,17 @@ func New(cfg config.Config, log *slog.Logger) (*Agent, error) {
 
 func (a *Agent) Run(ctx context.Context, enrollmentToken string) error {
     backoff := time.Second
-    firstAttempt := true
     for {
         if ctx.Err() != nil { return nil }
 
         selected, candidates, err := gateway.SelectFastest(ctx, a.cfg.WSNodes, a.cfg.ConnectTimeout)
         if err != nil {
             a.log.Warn("no gateway reachable", "error", err)
-            if firstAttempt { return err }
             if !sleepContext(ctx, backoff) { return nil }
             backoff = minDuration(backoff*2, a.cfg.ReconnectMax)
             continue
         }
-        firstAttempt = false
+        backoff = time.Second
         a.logGatewaySelection(selected, candidates)
 
         err = a.connectAndRun(ctx, selected, enrollmentToken)
@@ -88,22 +86,26 @@ func (a *Agent) connectAndRun(ctx context.Context, wsURL, enrollmentToken string
         if err := a.send(conn, "register", a.registration(enrollmentToken)); err != nil { return err }
     }
 
-    authenticated, err := a.finishHandshake(conn)
-    if err != nil { return err }
+    if err := a.finishHandshake(conn); err != nil { return err }
     a.log.Info("agent authenticated", "agent_id", a.creds.AgentID, "key_id", a.creds.KeyID, "gateway", wsURL)
 
-    now := time.Now().UTC()
-    if err := a.send(conn, "heartbeat", a.heartbeat(now)); err != nil { return err }
+    if err := a.send(conn, "heartbeat", a.heartbeat(time.Now().UTC())); err != nil { return err }
 
     heartbeat := time.NewTicker(a.cfg.HeartbeatInterval)
     defer heartbeat.Stop()
     ping := time.NewTicker(a.cfg.PingInterval)
     defer ping.Stop()
 
+    readCh := make(chan readResult, 1)
+    go readLoop(conn, readCh)
+
     for {
         select {
         case <-ctx.Done():
             return nil
+        case result := <-readCh:
+            if result.err != nil { return result.err }
+            if err := handleServerMessage(result.raw); err != nil { return err }
         case <-heartbeat.C:
             if err := a.send(conn, "heartbeat", a.heartbeat(time.Now().UTC())); err != nil { return err }
         case <-ping.C:
@@ -112,51 +114,53 @@ func (a *Agent) connectAndRun(ctx context.Context, wsURL, enrollmentToken string
             err := conn.WriteMessage(websocket.PingMessage, nil)
             a.writeMu.Unlock()
             if err != nil { return err }
-        default:
-            _ = conn.SetReadDeadline(time.Now().Add(a.cfg.PingInterval * 2))
-            _, raw, readErr := conn.ReadMessage()
-            if readErr != nil { return readErr }
-            if err := handleServerMessage(raw, authenticated); err != nil { return err }
         }
     }
 }
 
-func (a *Agent) finishHandshake(conn *websocket.Conn) (bool, error) {
+type readResult struct { raw []byte; err error }
+
+func readLoop(conn *websocket.Conn, resultCh chan<- readResult) {
     for {
         _, raw, err := conn.ReadMessage()
-        if err != nil { return false, err }
+        resultCh <- readResult{raw: raw, err: err}
+        if err != nil { return }
+    }
+}
+
+func (a *Agent) finishHandshake(conn *websocket.Conn) error {
+    for {
+        _, raw, err := conn.ReadMessage()
+        if err != nil { return err }
         var env protocol.Envelope
-        if err := json.Unmarshal(raw, &env); err != nil { return false, errors.New("invalid gateway message") }
+        if err := json.Unmarshal(raw, &env); err != nil { return errors.New("invalid gateway message") }
         switch env.Type {
         case "registration_complete":
             var complete protocol.RegistrationComplete
-            if err := json.Unmarshal(env.Data, &complete); err != nil { return false, err }
-            if complete.AgentID == "" || complete.KeyID == "" { return false, errors.New("gateway returned incomplete registration") }
+            if err := json.Unmarshal(env.Data, &complete); err != nil { return err }
+            if complete.AgentID == "" || complete.KeyID == "" { return errors.New("gateway returned incomplete registration") }
             a.creds.AgentID = complete.AgentID
             a.creds.KeyID = complete.KeyID
-            if err := a.store.Save(a.creds); err != nil { return false, err }
+            if err := a.store.Save(a.creds); err != nil { return err }
             a.log.Info("agent enrollment completed", "agent_id", complete.AgentID, "key_id", complete.KeyID)
         case "challenge":
             var challenge protocol.Challenge
-            if err := json.Unmarshal(env.Data, &challenge); err != nil { return false, err }
+            if err := json.Unmarshal(env.Data, &challenge); err != nil { return err }
             signature := ed25519.Sign(a.private, []byte(challenge.Challenge))
             encoded := base64.RawURLEncoding.EncodeToString(signature)
-            if err := a.send(conn, "challenge_response", protocol.ChallengeResponse{KeyID: a.creds.KeyID, Signature: encoded}); err != nil { return false, err }
+            if err := a.send(conn, "challenge_response", protocol.ChallengeResponse{KeyID: a.creds.KeyID, Signature: encoded}); err != nil { return err }
         case "authenticated":
-            return true, nil
+            return nil
         case "error":
             var gatewayErr protocol.Error
             _ = json.Unmarshal(env.Data, &gatewayErr)
             if gatewayErr.Message == "" { gatewayErr.Message = "gateway rejected connection" }
-            return false, fmt.Errorf("gateway error %s: %s", gatewayErr.Code, gatewayErr.Message)
-        default:
-            continue
+            return fmt.Errorf("gateway error %s: %s", gatewayErr.Code, gatewayErr.Message)
         }
     }
 }
 
-func handleServerMessage(raw []byte, authenticated bool) error {
-    if !authenticated { return errors.New("connection is not authenticated") }
+func handleServerMessage(raw []byte) error {
     var env protocol.Envelope
     if err := json.Unmarshal(raw, &env); err != nil { return errors.New("invalid gateway message") }
     if env.Type == "error" {
@@ -164,8 +168,6 @@ func handleServerMessage(raw []byte, authenticated bool) error {
         _ = json.Unmarshal(env.Data, &gatewayErr)
         return fmt.Errorf("gateway error %s: %s", gatewayErr.Code, gatewayErr.Message)
     }
-    // pong/control messages are intentionally handled by the WebSocket layer;
-    // unknown server messages are ignored for forward compatibility.
     return nil
 }
 
