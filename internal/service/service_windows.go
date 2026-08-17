@@ -19,18 +19,36 @@ func install(executable, token string) error {
 
     _ = exec.Command("sc.exe", "stop", Name).Run()
     _ = exec.Command("sc.exe", "delete", Name).Run()
+
+    // Keep the service command minimal. service run sets FORTMONT_CONFIG_DIR
+    // to the machine-wide directory before loading configuration, so the
+    // service does not depend on its working directory or the interactive
+    // user's environment.
     binPath := fmt.Sprintf(`"%s" service run`, executable)
-    if out, err := exec.Command("sc.exe", "create", Name, "binPath=", binPath, "start=", "auto", "DisplayName=", "Fortmont Agent").CombinedOutput(); err != nil { return fmt.Errorf("create Windows service: %w: %s", err, strings.TrimSpace(string(out))) }
+    if out, err := exec.Command("sc.exe", "create", Name, "binPath=", binPath, "start=", "auto", "DisplayName=", "Fortmont Agent").CombinedOutput(); err != nil {
+        return fmt.Errorf("create Windows service: %w: %s", err, strings.TrimSpace(string(out)))
+    }
     _ = exec.Command("sc.exe", "description", Name, "Fortmont infrastructure monitoring agent").Run()
-    if out, err := exec.Command("sc.exe", "start", Name).CombinedOutput(); err != nil { return fmt.Errorf("start Windows service: %w: %s", err, strings.TrimSpace(string(out))) }
+
+    // Restart automatically after an unexpected agent failure. This is
+    // especially important for a long-running gateway client: the service
+    // being installed/running is not the same thing as an active WS session.
+    _ = exec.Command("sc.exe", "failure", Name, "reset=", "86400", "actions=", "restart/5000/restart/10000/restart/30000").Run()
+
+    if out, err := exec.Command("sc.exe", "start", Name).CombinedOutput(); err != nil {
+        return fmt.Errorf("start Windows service: %w: %s", err, strings.TrimSpace(string(out)))
+    }
     fmt.Printf("Fortmont Agent service installed successfully windowsServiceName=%s\n", Name)
+    fmt.Printf("Fortmont Agent runtime logs: %s\n", filepath.Join(ConfigDir(), "agent.log"))
     return nil
 }
 
 func writeServiceEnv() error {
     keys := []string{"FORTMONT_WS_NODES", "FORTMONT_VERSION", "FORTMONT_PUBLIC_IP", "FORTMONT_LOG_LEVEL", "FORTMONT_CONNECT_TIMEOUT_SEC", "FORTMONT_RECONNECT_MAX_SEC", "FORTMONT_HEARTBEAT_SEC", "FORTMONT_PING_INTERVAL_SEC", "FORTMONT_GATEWAY_HEALTH_CHECK_SEC"}
-    var lines []string
-    for _, key := range keys { if value := os.Getenv(key); value != "" { lines = append(lines, key+"="+value) } }
+    var lines []string{"FORTMONT_CONFIG_DIR=" + ConfigDir()}
+    for _, key := range keys {
+        if value := os.Getenv(key); value != "" { lines = append(lines, key+"="+value) }
+    }
     if err := os.WriteFile(filepath.Join(ConfigDir(), "service.env"), []byte(strings.Join(lines, "\n")+"\n"), 0600); err != nil { return fmt.Errorf("write service environment: %w", err) }
     return nil
 }
@@ -47,5 +65,6 @@ func status() error {
     out, err := exec.Command("sc.exe", "query", Name).CombinedOutput()
     if len(out) > 0 { fmt.Print(string(out)) }
     if err != nil { return fmt.Errorf("Fortmont Agent service is not installed or could not be queried: %w", err) }
+    fmt.Printf("Runtime logs: %s\n", filepath.Join(ConfigDir(), "agent.log"))
     return nil
 }
