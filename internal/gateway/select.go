@@ -20,14 +20,31 @@ type Candidate struct {
 }
 
 // SelectFastest probes every configured gateway concurrently and selects the
-// gateway with the lowest successful WebSocket handshake latency. Measuring a
-// real WebSocket handshake (rather than only TCP/TLS) makes the result reflect
-// the connection the agent will actually use.
+// gateway with the lowest successful WebSocket handshake latency.
 func SelectFastest(ctx context.Context, nodes []string, timeout time.Duration) (string, []Candidate, error) {
-    results := make([]Candidate, len(nodes))
+    return SelectFastestExcluding(ctx, nodes, nil, timeout)
+}
+
+// SelectFastestExcluding is used after a live connection has failed. Failed
+// gateways are temporarily excluded so a reconnect does not immediately land
+// back on the same unhealthy node. If every configured gateway is excluded,
+// the exclusion is ignored and all gateways are probed again.
+func SelectFastestExcluding(ctx context.Context, nodes []string, excluded map[string]struct{}, timeout time.Duration) (string, []Candidate, error) {
+    candidates := make([]string, 0, len(nodes))
+    for _, node := range nodes {
+        if _, skip := excluded[node]; skip {
+            continue
+        }
+        candidates = append(candidates, node)
+    }
+    if len(candidates) == 0 {
+        candidates = append(candidates, nodes...)
+    }
+
+    results := make([]Candidate, len(candidates))
     var wg sync.WaitGroup
 
-    for i, node := range nodes {
+    for i, node := range candidates {
         wg.Add(1)
         go func(i int, node string) {
             defer wg.Done()
