@@ -1,0 +1,20 @@
+.env
+.env.*
+!.env.example
+
+# Agent runtime credentials
+credentials.json
+*.credentials.json
+
+# Binaries
+fortmont-agent
+*.exe
+*.dll
+*.so
+*.dylib
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
