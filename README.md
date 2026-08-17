@@ -1,17 +1,17 @@
 # Fortmont Agent
 
-The Fortmont Agent is the node-side runtime for Fortmont. It is deliberately responsible only for the agent side of the control-plane/WebSocket contract; durable agent authorization remains in Fortmont Control Plane and realtime presence remains in Redis through the Fortmont WS gateway.
+The Fortmont Agent is the node-side runtime for Fortmont. It implements the agent side of the Control Plane/WebSocket contract; durable authorization remains in Fortmont Control Plane and realtime presence remains in Redis through the Fortmont WS gateway.
 
 ## Lifecycle
 
 ### First installation
 
 1. The Control Plane creates a pending agent and one-time enrollment token.
-2. The agent starts with `--token <enrollment-token>` (or `FORTMONT_ENROLLMENT_TOKEN`).
+2. The agent starts with `--token <enrollment-token>`.
 3. On first startup the agent generates an Ed25519 keypair locally and persists the private key with restrictive file permissions.
 4. The agent generates a stable device ID and collects hostname/platform/architecture/version/local IP metadata.
 5. Every configured WebSocket gateway is probed concurrently. The lowest-latency reachable gateway is selected.
-6. The agent connects to `<selected>/ws` and sends `register` with the enrollment token and public key.
+6. The agent connects to the selected gateway and sends `register` with the enrollment token and public key.
 7. The WS gateway forwards registration to the authenticated Control Plane internal API.
 8. After `registration_complete`, the agent persists `agent_id` and `key_id` but never persists the enrollment token.
 9. The gateway sends a fresh challenge. The agent signs the challenge with its Ed25519 private key.
@@ -21,7 +21,7 @@ The Fortmont Agent is the node-side runtime for Fortmont. It is deliberately res
 
 Once `agent_id` and `key_id` exist, the enrollment token is no longer required. The agent probes the configured gateway nodes, selects the fastest reachable node, sends `authenticate`, signs a fresh challenge and resumes heartbeat/ping traffic.
 
-If the connection fails, the agent retries with exponential backoff capped by `FORTMONT_RECONNECT_MAX_SEC` and selects the fastest reachable gateway again. This allows multiple WS nodes behind a load balancer or DNS-independent node list.
+If the connection fails, the agent retries with exponential backoff capped by `FORTMONT_RECONNECT_MAX_SEC` and selects the fastest reachable gateway again. This supports multiple WS nodes without putting any gateway-specific identity state on the agent.
 
 If the Control Plane revokes the agent, the gateway closes the connection through the Redis revocation event path. A subsequent authentication is rejected by the Control Plane even though the agent still possesses its private key.
 
@@ -42,7 +42,6 @@ Copy `.env.example` to `.env` for local development. `.env` is ignored by Git. P
 Important variables:
 
 - `FORTMONT_WS_NODES` — required, comma-separated `ws://`/`wss://` gateway URLs.
-- `FORTMONT_ENROLLMENT_TOKEN` — optional bootstrap token; `--token` is preferred for first enrollment.
 - `FORTMONT_CONFIG_DIR` — credential directory. Defaults to the OS user config directory.
 - `FORTMONT_VERSION` — agent version reported to Fortmont.
 - `FORTMONT_PUBLIC_IP` — optional externally observed public IP. Left blank if not configured.
@@ -51,11 +50,9 @@ Important variables:
 - `FORTMONT_HEARTBEAT_SEC` — heartbeat interval.
 - `FORTMONT_PING_INTERVAL_SEC` — WebSocket ping interval.
 
-## Local development
+The enrollment token is intentionally **not** an environment setting. Supply it directly during the first installation:
 
 ```powershell
-Copy-Item .env.example .env
-go mod tidy
 go run ./cmd/agent --token ft_enroll_...
 ```
 
@@ -100,7 +97,7 @@ The agent does not know or use `CONTROL_PLANE_INTERNAL_SECRET`. That secret is s
 
 ## Security properties
 
-- Enrollment token is a one-time bootstrap credential and is not stored after registration.
+- Enrollment token is a one-time bootstrap credential and is not persisted.
 - Ed25519 private key remains on the node.
 - Public key is the durable agent identity presented during enrollment.
 - Every connection requires a fresh challenge signature.
