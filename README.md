@@ -1,21 +1,32 @@
 # 🤖 Fortmont Agent
 
-The **Fortmont Agent** is a small application that runs on a computer or server and connects it to **Fortmont**.
+The **Fortmont Agent** is a lightweight application that runs on a server or computer and securely connects it to **Fortmont**.
 
-Think of it as the **bridge between a device and Fortmont** 🌉. It allows Fortmont to securely communicate with and monitor devices without requiring those devices to be directly exposed to the internet.
+Its main purpose is to act as a **secure bridge between Fortmont and local infrastructure**. 🌉
+
+By default, the agent collects and sends basic information about the device it is running on. Over time, the agent will also support **plugins** that allow Fortmont to connect to and interact with different infrastructure platforms such as **Proxmox, UniFi, and other services**.
 
 ## ✨ What does it do?
 
-Once installed, the Fortmont Agent:
+The Fortmont Agent provides a simple way to connect infrastructure to Fortmont.
 
-* 🔗 Connects the device to Fortmont.
-* 🖥️ Identifies the device and reports basic information about it.
-* 🔐 Maintains a secure connection with Fortmont.
-* 💓 Lets Fortmont know that the device is online.
+By default, it:
+
+* 🖥️ Reports basic device information and metrics.
+* 📊 Sends information such as system resource usage and device status.
+* 🔗 Maintains a secure connection with Fortmont.
 * 🔄 Automatically reconnects if the connection is interrupted.
 * ⚙️ Can run quietly in the background as a system service.
 
-The goal is to make connecting a device to Fortmont as simple as **installing the agent and registering it**.
+As the agent develops, plugins will extend its capabilities.
+
+For example:
+
+* 🖥️ **Proxmox** — Connect Fortmont to virtual machines, containers, and hosts.
+* 🌐 **UniFi** — Connect Fortmont to network equipment and network information.
+* 🔌 **Other plugins** — Add support for additional infrastructure platforms without having to completely rebuild the agent.
+
+This makes the agent flexible while keeping the core application simple.
 
 ## 🚀 Getting Started
 
@@ -31,7 +42,7 @@ For example:
 fortmont-agent --token <enrollment-token>
 ```
 
-Once setup is complete, the agent can run normally:
+Once registered, the agent can run normally:
 
 ```bash
 fortmont-agent
@@ -41,7 +52,7 @@ It can also be installed as a background service so it automatically starts with
 
 ## ⚙️ Running as a Service
 
-Fortmont supports running the agent as a normal system service on:
+Fortmont supports running the agent as a system service on:
 
 * 🪟 Windows
 * 🐧 Linux
@@ -54,47 +65,72 @@ fortmont-agent service status
 fortmont-agent service uninstall
 ```
 
-This allows the agent to run quietly in the background without someone needing to start it manually.
+This allows the agent to run quietly in the background without needing to be manually started.
 
 ## 🌐 Staying Connected
 
-The agent can connect to multiple Fortmont servers.
+The agent maintains a secure connection to Fortmont so that infrastructure information can be exchanged when needed.
 
-If one server isn't available, the agent can automatically try another. If the connection is temporarily lost, it will keep trying to reconnect.
+If the connection is interrupted, the agent automatically attempts to reconnect. 🔄
 
-This helps Fortmont stay reliable even when there are temporary network problems or when one of its servers is unavailable. 💪
+The agent can also connect through multiple Fortmont connection servers, helping keep the connection available if one server becomes unavailable.
+
+## 🧩 Plugins
+
+One of the main goals of the Fortmont Agent is to make it **extensible**.
+
+Instead of building every infrastructure integration directly into the agent, plugins can provide support for different platforms.
+
+For example:
+
+```text
+                 🤖 Fortmont Agent
+                         │
+          ┌──────────────┼──────────────┐
+          │              │              │
+          ▼              ▼              ▼
+     🖥️ Proxmox       🌐 UniFi       🔌 Other
+       Plugin          Plugin        Plugins
+```
+
+This means the core agent can remain lightweight while new infrastructure integrations can be added over time. 🚀
 
 ## 🔐 Security
 
 Security is an important part of the Fortmont Agent.
 
-The initial enrollment token is only used when the device is first registered. After that, the agent uses its own secure identity to prove that it is the registered device.
+The initial enrollment token is only used when the device is first registered. After registration, the agent uses its own secure identity to connect to Fortmont.
 
-🔒 Private credentials stay on the device and are never sent to Fortmont.
+🔒 Private credentials remain on the infrastructure where they are stored and are not unnecessarily exposed to Fortmont.
 
-Fortmont can also disable or revoke an agent if necessary. A revoked device won't be able to simply reconnect using its existing credentials.
+Fortmont can also revoke an agent if access needs to be removed.
 
 ## 💡 In Simple Terms
 
-Think of the Fortmont Agent as the **connector between a device and Fortmont**:
+Think of the Fortmont Agent as a **secure connector for infrastructure**.
+
+It runs on a server or computer, connects that infrastructure to Fortmont, and provides basic device metrics out of the box.
+
+As plugins are added, it can become a gateway to other infrastructure platforms too.
 
 ```text
-┌──────────────────┐
-│   🖥️ Your Server  │
-│                  │
-│  🤖 Fortmont     │
-│      Agent       │
-└────────┬─────────┘
-         │
-         │ 🔐 Secure connection
-         ▼
-┌──────────────────┐
-│ ☁️ Fortmont Cloud │
-│                  │
-│  Control Plane   │
-└──────────────────┘
+       🖥️ Infrastructure
+              │
+              │
+        🤖 Fortmont Agent
+              │
+       ┌──────┴──────┐
+       │             │
+   📊 Metrics     🧩 Plugins
+                     │
+              ┌──────┼──────┐
+              ▼      ▼      ▼
+           Proxmox  UniFi  Other
+              │      │      │
+              └──────┴──────┘
+                     │
+                     ▼
+              ☁️ Fortmont
 ```
 
-Install the agent, register the device, and Fortmont can securely communicate with it. 🚀
-
-The agent is designed to stay **simple, reliable, and easy to use**, while taking care of the connection in the background.
+The goal is to make connecting infrastructure to Fortmont **simple, secure, and extensible**. 
