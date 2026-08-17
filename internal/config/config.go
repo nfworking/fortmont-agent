@@ -12,14 +12,15 @@ import (
 )
 
 type Config struct {
-    WSNodes              []string
-    ConfigDir            string
-    CredentialsPath      string
-    Version              string
-    ConnectTimeout       time.Duration
-    ReconnectMax         time.Duration
-    HeartbeatInterval    time.Duration
-    PingInterval         time.Duration
+    WSNodes               []string
+    ConfigDir             string
+    CredentialsPath       string
+    EnrollmentTokenPath   string
+    Version               string
+    ConnectTimeout        time.Duration
+    ReconnectMax          time.Duration
+    HeartbeatInterval     time.Duration
+    PingInterval          time.Duration
     GatewayHealthInterval time.Duration
 }
 
@@ -56,6 +57,7 @@ func Load() (Config, error) {
         WSNodes: nodes,
         ConfigDir: dir,
         CredentialsPath: filepath.Join(dir, "credentials.json"),
+        EnrollmentTokenPath: filepath.Join(dir, "enrollment-token"),
         Version: version,
         ConnectTimeout: connectTimeout,
         ReconnectMax: reconnectMax,
@@ -63,6 +65,12 @@ func Load() (Config, error) {
         PingInterval: ping,
         GatewayHealthInterval: health,
     }, nil
+}
+
+func ReadEnrollmentToken(path string) (string, error) {
+    data, err := os.ReadFile(path)
+    if err != nil { return "", err }
+    return strings.TrimSpace(string(data)), nil
 }
 
 func seconds(key string, fallback int) (time.Duration, error) {
