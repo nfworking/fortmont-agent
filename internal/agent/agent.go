@@ -88,6 +88,7 @@ func (a *Agent) connectAndRun(ctx context.Context, wsURL, enrollmentToken string
 
     if err := a.finishHandshake(conn); err != nil { return err }
     a.log.Info("agent authenticated", "agent_id", a.creds.AgentID, "key_id", a.creds.KeyID, "gateway", wsURL)
+    _ = conn.SetReadDeadline(time.Now().Add(a.cfg.PingInterval * 2))
 
     if err := a.send(conn, "heartbeat", a.heartbeat(time.Now().UTC())); err != nil { return err }
 
@@ -97,7 +98,7 @@ func (a *Agent) connectAndRun(ctx context.Context, wsURL, enrollmentToken string
     defer ping.Stop()
 
     readCh := make(chan readResult, 1)
-    go readLoop(conn, readCh)
+    go readLoop(conn, readCh, a.cfg.PingInterval*2)
 
     for {
         select {
@@ -120,8 +121,9 @@ func (a *Agent) connectAndRun(ctx context.Context, wsURL, enrollmentToken string
 
 type readResult struct { raw []byte; err error }
 
-func readLoop(conn *websocket.Conn, resultCh chan<- readResult) {
+func readLoop(conn *websocket.Conn, resultCh chan<- readResult, timeout time.Duration) {
     for {
+        _ = conn.SetReadDeadline(time.Now().Add(timeout))
         _, raw, err := conn.ReadMessage()
         resultCh <- readResult{raw: raw, err: err}
         if err != nil { return }
