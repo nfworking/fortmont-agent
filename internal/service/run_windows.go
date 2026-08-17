@@ -5,7 +5,6 @@ package service
 import (
     "context"
     "errors"
-    "fmt"
     "sync"
 
     "golang.org/x/sys/windows/svc"
@@ -51,7 +50,7 @@ func (s *windowsService) Execute(_ []string, requests <-chan svc.ChangeRequest, 
         case request := <-requests:
             switch request.Cmd {
             case svc.Interrogate:
-                status <- requestCurrentStatus()
+                status <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
             case svc.Stop, svc.Shutdown:
                 status <- svc.Status{State: svc.StopPending, WaitHint: 5000}
                 cancel()
@@ -60,15 +59,7 @@ func (s *windowsService) Execute(_ []string, requests <-chan svc.ChangeRequest, 
                     return false, 1
                 }
                 return false, 0
-            default:
-                // Ignore unsupported service controls.
             }
         }
     }
 }
-
-func requestCurrentStatus() svc.Status {
-    return svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
-}
-
-var _ = fmt.Sprintf
