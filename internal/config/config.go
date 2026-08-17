@@ -22,15 +22,13 @@ type Config struct {
     HeartbeatInterval     time.Duration
     PingInterval          time.Duration
     GatewayHealthInterval time.Duration
+    MetricsInterval       time.Duration
 }
 
 func Load() (Config, error) {
     _ = loadDotEnv(".env")
-
     dir := os.Getenv("FORTMONT_CONFIG_DIR")
     if dir == "" { dir = defaultConfigDir() }
-    // Managed services do not inherit an interactive shell's working directory.
-    // Load the service environment from the protected config directory as well.
     _ = loadDotEnv(filepath.Join(dir, "service.env"))
 
     nodes := splitCSV(os.Getenv("FORTMONT_WS_NODES"))
@@ -48,8 +46,9 @@ func Load() (Config, error) {
     heartbeat, err := seconds("FORTMONT_HEARTBEAT_SEC", 30); if err != nil { return Config{}, err }
     ping, err := seconds("FORTMONT_PING_INTERVAL_SEC", 10); if err != nil { return Config{}, err }
     health, err := seconds("FORTMONT_GATEWAY_HEALTH_CHECK_SEC", 5); if err != nil { return Config{}, err }
+    metrics, err := seconds("FORTMONT_METRICS_INTERVAL_SEC", 15); if err != nil { return Config{}, err }
 
-    return Config{WSNodes: nodes, ConfigDir: dir, CredentialsPath: filepath.Join(dir, "credentials.json"), EnrollmentTokenPath: filepath.Join(dir, "enrollment-token"), Version: version, ConnectTimeout: connectTimeout, ReconnectMax: reconnectMax, HeartbeatInterval: heartbeat, PingInterval: ping, GatewayHealthInterval: health}, nil
+    return Config{WSNodes: nodes, ConfigDir: dir, CredentialsPath: filepath.Join(dir, "credentials.json"), EnrollmentTokenPath: filepath.Join(dir, "enrollment-token"), Version: version, ConnectTimeout: connectTimeout, ReconnectMax: reconnectMax, HeartbeatInterval: heartbeat, PingInterval: ping, GatewayHealthInterval: health, MetricsInterval: metrics}, nil
 }
 
 func ReadEnrollmentToken(path string) (string, error) {
