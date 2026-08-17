@@ -13,7 +13,6 @@ import (
 
 type Config struct {
     WSNodes           []string
-    EnrollmentToken   string
     ConfigDir         string
     CredentialsPath   string
     Version           string
@@ -56,7 +55,6 @@ func Load() (Config, error) {
 
     return Config{
         WSNodes: nodes,
-        EnrollmentToken: strings.TrimSpace(os.Getenv("FORTMONT_ENROLLMENT_TOKEN")),
         ConfigDir: dir,
         CredentialsPath: filepath.Join(dir, "credentials.json"),
         Version: version,
