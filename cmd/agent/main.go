@@ -25,7 +25,6 @@ func main() {
     }
 
     enrollmentToken := strings.TrimSpace(*tokenFlag)
-    if enrollmentToken == "" { enrollmentToken = cfg.EnrollmentToken }
 
     instance, err := agent.New(cfg, logger)
     if err != nil {
