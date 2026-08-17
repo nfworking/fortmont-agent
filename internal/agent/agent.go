@@ -60,24 +60,19 @@ func (a *Agent) Run(ctx context.Context, enrollmentToken string) error {
         err = a.connectAndRun(ctx, selected, enrollmentToken)
         if err == nil || ctx.Err() != nil { return nil }
 
-        // A live connection has failed. Do not immediately reconnect to the
-        // same gateway: it may be accepting TCP/WebSocket handshakes while its
-        // existing connections are unhealthy. Mark it failed and force the
-        // next selection to prefer another configured gateway.
         failedGateways[selected] = struct{}{}
         a.log.Warn("gateway connection ended; failing over", "gateway", selected, "error", err)
 
-        // The enrollment token is only a bootstrap credential. Once the
-        // connection has completed registration, credentials are persisted and
-        // all subsequent reconnects use the agent's Ed25519 identity.
+        // Enrollment is a one-time bootstrap credential. Once registration has
+        // completed, reconnects authenticate with the persisted Ed25519 key.
         enrollmentToken = ""
+
         if !sleepContext(ctx, backoff) { return nil }
         backoff = minDuration(backoff*2, a.cfg.ReconnectMax)
 
-        // The next successful connection resets the failed-node set below on
-        // the following loop. Keep the current exclusions only for the
-        // immediate failover attempt; recovered gateways should be eligible
-        // again after a healthy connection is established.
+        // Do not permanently blacklist a gateway. After all configured nodes
+        // have been tried, probe the full pool again so recovered gateways can
+        // automatically re-enter service.
         if len(failedGateways) >= len(a.cfg.WSNodes) {
             failedGateways = make(map[string]struct{})
         }
@@ -115,6 +110,8 @@ func (a *Agent) connectAndRun(ctx context.Context, wsURL, enrollmentToken string
     defer heartbeat.Stop()
     ping := time.NewTicker(a.cfg.PingInterval)
     defer ping.Stop()
+    health := time.NewTicker(a.cfg.GatewayHealthInterval)
+    defer health.Stop()
 
     readCh := make(chan readResult, 1)
     go readLoop(conn, readCh, a.cfg.PingInterval*2)
@@ -124,16 +121,27 @@ func (a *Agent) connectAndRun(ctx context.Context, wsURL, enrollmentToken string
         case <-ctx.Done():
             return nil
         case result := <-readCh:
-            if result.err != nil { return result.err }
+            if result.err != nil { return fmt.Errorf("gateway connection lost: %w", result.err) }
             if err := handleServerMessage(result.raw); err != nil { return err }
         case <-heartbeat.C:
-            if err := a.send(conn, "heartbeat", a.heartbeat(time.Now().UTC())); err != nil { return err }
+            if err := a.send(conn, "heartbeat", a.heartbeat(time.Now().UTC())); err != nil { return fmt.Errorf("heartbeat failed: %w", err) }
         case <-ping.C:
             a.writeMu.Lock()
             _ = conn.SetWriteDeadline(time.Now().Add(a.cfg.ConnectTimeout))
             err := conn.WriteMessage(websocket.PingMessage, nil)
             a.writeMu.Unlock()
-            if err != nil { return err }
+            if err != nil { return fmt.Errorf("gateway ping failed: %w", err) }
+        case <-health.C:
+            // A tunnel/proxy can disappear while an existing TCP connection
+            // remains open for a short period. Probing the actual WS endpoint
+            // catches that condition independently of the current socket and
+            // forces the reconnect loop to choose another gateway.
+            probeCtx, cancel := context.WithTimeout(ctx, a.cfg.ConnectTimeout)
+            probeErr := gateway.Probe(probeCtx, wsURL, a.cfg.ConnectTimeout)
+            cancel()
+            if probeErr != nil {
+                return fmt.Errorf("gateway health check failed: %w", probeErr)
+            }
         }
     }
 }
@@ -173,7 +181,7 @@ func (a *Agent) finishHandshake(conn *websocket.Conn) error {
         case "authenticated":
             return nil
         case "error":
-            var gatewayErr protocol.Error
+            var gatewayErr struct { Code string `json:"code"`; Message string `json:"message"` }
             _ = json.Unmarshal(env.Data, &gatewayErr)
             if gatewayErr.Message == "" { gatewayErr.Message = "gateway rejected connection" }
             return fmt.Errorf("gateway error %s: %s", gatewayErr.Code, gatewayErr.Message)
@@ -185,7 +193,7 @@ func handleServerMessage(raw []byte) error {
     var env protocol.Envelope
     if err := json.Unmarshal(raw, &env); err != nil { return errors.New("invalid gateway message") }
     if env.Type == "error" {
-        var gatewayErr protocol.Error
+        var gatewayErr struct { Code string `json:"code"`; Message string `json:"message"` }
         _ = json.Unmarshal(env.Data, &gatewayErr)
         return fmt.Errorf("gateway error %s: %s", gatewayErr.Code, gatewayErr.Message)
     }
