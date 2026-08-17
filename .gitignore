@@ -5,6 +5,8 @@
 # Agent runtime credentials
 credentials.json
 *.credentials.json
+enrollment-token
+service.env
 
 # Binaries
 fortmont-agent

@@ -63,19 +63,11 @@ func (a *Agent) Run(ctx context.Context, enrollmentToken string) error {
         failedGateways[selected] = struct{}{}
         a.log.Warn("gateway connection ended; failing over", "gateway", selected, "error", err)
 
-        // Enrollment is a one-time bootstrap credential. Once registration has
-        // completed, reconnects authenticate with the persisted Ed25519 key.
         enrollmentToken = ""
 
         if !sleepContext(ctx, backoff) { return nil }
         backoff = minDuration(backoff*2, a.cfg.ReconnectMax)
-
-        // Do not permanently blacklist a gateway. After all configured nodes
-        // have been tried, probe the full pool again so recovered gateways can
-        // automatically re-enter service.
-        if len(failedGateways) >= len(a.cfg.WSNodes) {
-            failedGateways = make(map[string]struct{})
-        }
+        if len(failedGateways) >= len(a.cfg.WSNodes) { failedGateways = make(map[string]struct{}) }
     }
 }
 
@@ -89,9 +81,7 @@ func (a *Agent) connectAndRun(ctx context.Context, wsURL, enrollmentToken string
 
     conn.SetReadLimit(1024 * 1024)
     _ = conn.SetReadDeadline(time.Now().Add(a.cfg.ConnectTimeout))
-    conn.SetPongHandler(func(string) error {
-        return conn.SetReadDeadline(time.Now().Add(a.cfg.PingInterval * 2))
-    })
+    conn.SetPongHandler(func(string) error { return conn.SetReadDeadline(time.Now().Add(a.cfg.PingInterval * 2)) })
 
     if a.creds.AgentID != "" && a.creds.KeyID != "" {
         if err := a.send(conn, "authenticate", protocol.AuthenticateRequest{AgentID: a.creds.AgentID, KeyID: a.creds.KeyID}); err != nil { return err }
@@ -103,7 +93,6 @@ func (a *Agent) connectAndRun(ctx context.Context, wsURL, enrollmentToken string
     if err := a.finishHandshake(conn); err != nil { return err }
     a.log.Info("agent authenticated", "agent_id", a.creds.AgentID, "key_id", a.creds.KeyID, "gateway", wsURL)
     _ = conn.SetReadDeadline(time.Now().Add(a.cfg.PingInterval * 2))
-
     if err := a.send(conn, "heartbeat", a.heartbeat(time.Now().UTC())); err != nil { return err }
 
     heartbeat := time.NewTicker(a.cfg.HeartbeatInterval)
@@ -118,8 +107,7 @@ func (a *Agent) connectAndRun(ctx context.Context, wsURL, enrollmentToken string
 
     for {
         select {
-        case <-ctx.Done():
-            return nil
+        case <-ctx.Done(): return nil
         case result := <-readCh:
             if result.err != nil { return fmt.Errorf("gateway connection lost: %w", result.err) }
             if err := handleServerMessage(result.raw); err != nil { return err }
@@ -132,16 +120,10 @@ func (a *Agent) connectAndRun(ctx context.Context, wsURL, enrollmentToken string
             a.writeMu.Unlock()
             if err != nil { return fmt.Errorf("gateway ping failed: %w", err) }
         case <-health.C:
-            // A tunnel/proxy can disappear while an existing TCP connection
-            // remains open for a short period. Probing the actual WS endpoint
-            // catches that condition independently of the current socket and
-            // forces the reconnect loop to choose another gateway.
             probeCtx, cancel := context.WithTimeout(ctx, a.cfg.ConnectTimeout)
             probeErr := gateway.Probe(probeCtx, wsURL, a.cfg.ConnectTimeout)
             cancel()
-            if probeErr != nil {
-                return fmt.Errorf("gateway health check failed: %w", probeErr)
-            }
+            if probeErr != nil { return fmt.Errorf("gateway health check failed: %w", probeErr) }
         }
     }
 }
@@ -171,6 +153,7 @@ func (a *Agent) finishHandshake(conn *websocket.Conn) error {
             a.creds.AgentID = complete.AgentID
             a.creds.KeyID = complete.KeyID
             if err := a.store.Save(a.creds); err != nil { return err }
+            _ = os.Remove(a.cfg.EnrollmentTokenPath)
             a.log.Info("agent enrollment completed", "agent_id", complete.AgentID, "key_id", complete.KeyID)
         case "challenge":
             var challenge protocol.Challenge
@@ -178,8 +161,7 @@ func (a *Agent) finishHandshake(conn *websocket.Conn) error {
             signature := ed25519.Sign(a.private, []byte(challenge.Challenge))
             encoded := base64.RawURLEncoding.EncodeToString(signature)
             if err := a.send(conn, "challenge_response", protocol.ChallengeResponse{KeyID: a.creds.KeyID, Signature: encoded}); err != nil { return err }
-        case "authenticated":
-            return nil
+        case "authenticated": return nil
         case "error":
             var gatewayErr struct { Code string `json:"code"`; Message string `json:"message"` }
             _ = json.Unmarshal(env.Data, &gatewayErr)
@@ -202,30 +184,12 @@ func handleServerMessage(raw []byte) error {
 
 func (a *Agent) registration(token string) protocol.RegisterRequest {
     hostname, _ := os.Hostname()
-    return protocol.RegisterRequest{
-        EnrollmentToken: token,
-        PublicKey: base64.RawURLEncoding.EncodeToString(a.public),
-        DeviceID: a.creds.DeviceID,
-        Hostname: hostname,
-        LocalIP: localIP(),
-        PublicIP: strings.TrimSpace(os.Getenv("FORTMONT_PUBLIC_IP")),
-        Platform: runtime.GOOS,
-        Architecture: runtime.GOARCH,
-        Version: a.cfg.Version,
-    }
+    return protocol.RegisterRequest{EnrollmentToken: token, PublicKey: base64.RawURLEncoding.EncodeToString(a.public), DeviceID: a.creds.DeviceID, Hostname: hostname, LocalIP: localIP(), PublicIP: strings.TrimSpace(os.Getenv("FORTMONT_PUBLIC_IP")), Platform: runtime.GOOS, Architecture: runtime.GOARCH, Version: a.cfg.Version}
 }
 
 func (a *Agent) heartbeat(now time.Time) protocol.Heartbeat {
     hostname, _ := os.Hostname()
-    return protocol.Heartbeat{
-        Timestamp: now.Format(time.RFC3339Nano),
-        Hostname: hostname,
-        LocalIP: localIP(),
-        PublicIP: strings.TrimSpace(os.Getenv("FORTMONT_PUBLIC_IP")),
-        Platform: runtime.GOOS,
-        Architecture: runtime.GOARCH,
-        Version: a.cfg.Version,
-    }
+    return protocol.Heartbeat{Timestamp: now.Format(time.RFC3339Nano), Hostname: hostname, LocalIP: localIP(), PublicIP: strings.TrimSpace(os.Getenv("FORTMONT_PUBLIC_IP")), Platform: runtime.GOOS, Architecture: runtime.GOARCH, Version: a.cfg.Version}
 }
 
 func (a *Agent) send(conn *websocket.Conn, typ string, data any) error {
@@ -239,9 +203,7 @@ func (a *Agent) send(conn *websocket.Conn, typ string, data any) error {
 
 func (a *Agent) logGatewaySelection(selected string, candidates []gateway.Candidate) {
     fields := make([]any, 0, len(candidates)*2)
-    for _, candidate := range candidates {
-        fields = append(fields, candidate.URL, candidate.Latency.String())
-    }
+    for _, candidate := range candidates { fields = append(fields, candidate.URL, candidate.Latency.String()) }
     a.log.Info("selected fastest WebSocket gateway", "url", selected, "candidates", fields)
 }
 
