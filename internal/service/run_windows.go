@@ -11,7 +11,12 @@ import (
 )
 
 func run(worker func(context.Context) error) error {
-    if !svc.IsWindowsService() {
+    isService, err := svc.IsWindowsService()
+    if err != nil {
+        return err
+    }
+
+    if !isService {
         ctx, cancel := context.WithCancel(context.Background())
         defer cancel()
         return worker(ctx)
