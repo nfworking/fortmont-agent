@@ -119,13 +119,10 @@ func newLogger() (*slog.Logger, func(), error) {
     level := logLevel(os.Getenv("FORTMONT_LOG_LEVEL"))
     handlerOptions := &slog.HandlerOptions{Level: level}
 
-    // Windows/Linux services do not have a useful interactive stdout. Keep
-    // stdout for normal CLI runs and persist service diagnostics beside the
-    // service credentials so authentication/reconnect failures are inspectable.
-    dir := service.ConfigDir()
-    if os.Getenv("FORTMONT_CONFIG_DIR") != "" {
-        dir = os.Getenv("FORTMONT_CONFIG_DIR")
-    }
+    // A managed service has no useful interactive stdout. Persist service
+    // diagnostics beside the service credentials. Normal CLI runs continue
+    // to log only to stdout unless FORTMONT_CONFIG_DIR is explicitly set.
+    dir := strings.TrimSpace(os.Getenv("FORTMONT_CONFIG_DIR"))
     if dir == "" {
         return slog.New(slog.NewTextHandler(os.Stdout, handlerOptions)), func() {}, nil
     }
