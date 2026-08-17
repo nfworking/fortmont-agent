@@ -43,25 +43,44 @@ func New(cfg config.Config, log *slog.Logger) (*Agent, error) {
 
 func (a *Agent) Run(ctx context.Context, enrollmentToken string) error {
     backoff := time.Second
+    failedGateways := make(map[string]struct{})
+
     for {
         if ctx.Err() != nil { return nil }
 
-        selected, candidates, err := gateway.SelectFastest(ctx, a.cfg.WSNodes, a.cfg.ConnectTimeout)
+        selected, candidates, err := gateway.SelectFastestExcluding(ctx, a.cfg.WSNodes, failedGateways, a.cfg.ConnectTimeout)
         if err != nil {
             a.log.Warn("no gateway reachable", "error", err)
             if !sleepContext(ctx, backoff) { return nil }
             backoff = minDuration(backoff*2, a.cfg.ReconnectMax)
             continue
         }
-        backoff = time.Second
         a.logGatewaySelection(selected, candidates)
 
         err = a.connectAndRun(ctx, selected, enrollmentToken)
         if err == nil || ctx.Err() != nil { return nil }
-        a.log.Warn("gateway connection ended; reconnecting", "error", err)
+
+        // A live connection has failed. Do not immediately reconnect to the
+        // same gateway: it may be accepting TCP/WebSocket handshakes while its
+        // existing connections are unhealthy. Mark it failed and force the
+        // next selection to prefer another configured gateway.
+        failedGateways[selected] = struct{}{}
+        a.log.Warn("gateway connection ended; failing over", "gateway", selected, "error", err)
+
+        // The enrollment token is only a bootstrap credential. Once the
+        // connection has completed registration, credentials are persisted and
+        // all subsequent reconnects use the agent's Ed25519 identity.
         enrollmentToken = ""
         if !sleepContext(ctx, backoff) { return nil }
         backoff = minDuration(backoff*2, a.cfg.ReconnectMax)
+
+        // The next successful connection resets the failed-node set below on
+        // the following loop. Keep the current exclusions only for the
+        // immediate failover attempt; recovered gateways should be eligible
+        // again after a healthy connection is established.
+        if len(failedGateways) >= len(a.cfg.WSNodes) {
+            failedGateways = make(map[string]struct{})
+        }
     }
 }
 
