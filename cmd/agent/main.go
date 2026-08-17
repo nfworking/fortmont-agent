@@ -50,8 +50,6 @@ func handleServiceCommand(args []string) error {
         if err := flags.Parse(args[1:]); err != nil { return err }
         if strings.TrimSpace(*token) == "" { return fmt.Errorf("service install requires --token") }
 
-        // Load .env before writing the service environment. This makes
-        // `service install` behave consistently with an interactive run.
         if _, err := config.Load(); err != nil { return fmt.Errorf("invalid configuration: %w", err) }
 
         executable, err := os.Executable()
@@ -94,10 +92,19 @@ func runAgent(ctx context.Context, token string) error {
     }
 
     enrollmentToken := token
+    tokenSource := "command-line"
     if enrollmentToken == "" {
-        if stored, readErr := config.ReadEnrollmentToken(cfg.EnrollmentTokenPath); readErr == nil {
+        stored, readErr := config.ReadEnrollmentToken(cfg.EnrollmentTokenPath)
+        if readErr == nil {
             enrollmentToken = stored
+            tokenSource = "service-enrollment-file"
         }
+    }
+
+    if enrollmentToken != "" {
+        logger.Info("enrollment token available", "source", tokenSource)
+    } else {
+        logger.Info("no enrollment token available; using stored agent identity")
     }
 
     instance, err := agent.New(cfg, logger)
@@ -119,9 +126,6 @@ func newLogger() (*slog.Logger, func(), error) {
     level := logLevel(os.Getenv("FORTMONT_LOG_LEVEL"))
     handlerOptions := &slog.HandlerOptions{Level: level}
 
-    // A managed service has no useful interactive stdout. Persist service
-    // diagnostics beside the service credentials. Normal CLI runs continue
-    // to log only to stdout unless FORTMONT_CONFIG_DIR is explicitly set.
     dir := strings.TrimSpace(os.Getenv("FORTMONT_CONFIG_DIR"))
     if dir == "" {
         return slog.New(slog.NewTextHandler(os.Stdout, handlerOptions)), func() {}, nil
