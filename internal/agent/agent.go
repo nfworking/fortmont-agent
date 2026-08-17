@@ -74,23 +74,31 @@ func (a *Agent) Run(ctx context.Context, enrollmentToken string) error {
 func (a *Agent) connectAndRun(ctx context.Context, wsURL, enrollmentToken string) error {
     parsed, err := url.Parse(wsURL)
     if err != nil { return err }
+
+    a.log.Info("connecting to WebSocket gateway", "gateway", wsURL)
     dialer := websocket.Dialer{HandshakeTimeout: a.cfg.ConnectTimeout}
     conn, _, err := dialer.DialContext(ctx, parsed.String(), nil)
     if err != nil { return fmt.Errorf("connect %s: %w", wsURL, err) }
     defer conn.Close()
 
+    a.log.Info("WebSocket connection established", "gateway", wsURL)
     conn.SetReadLimit(1024 * 1024)
     _ = conn.SetReadDeadline(time.Now().Add(a.cfg.ConnectTimeout))
     conn.SetPongHandler(func(string) error { return conn.SetReadDeadline(time.Now().Add(a.cfg.PingInterval * 2)) })
 
     if a.creds.AgentID != "" && a.creds.KeyID != "" {
+        a.log.Info("authenticating agent identity", "agent_id", a.creds.AgentID, "key_id", a.creds.KeyID)
         if err := a.send(conn, "authenticate", protocol.AuthenticateRequest{AgentID: a.creds.AgentID, KeyID: a.creds.KeyID}); err != nil { return err }
     } else {
         if enrollmentToken == "" { return errors.New("agent is not enrolled; supply an enrollment token with --token or FORTMONT_ENROLLMENT_TOKEN") }
+        a.log.Info("registering agent with enrollment token", "device_id", a.creds.DeviceID)
         if err := a.send(conn, "register", a.registration(enrollmentToken)); err != nil { return err }
     }
 
-    if err := a.finishHandshake(conn); err != nil { return err }
+    if err := a.finishHandshake(conn); err != nil {
+        a.log.Warn("gateway authentication failed", "gateway", wsURL, "error", err)
+        return err
+    }
     a.log.Info("agent authenticated", "agent_id", a.creds.AgentID, "key_id", a.creds.KeyID, "gateway", wsURL)
     _ = conn.SetReadDeadline(time.Now().Add(a.cfg.PingInterval * 2))
     if err := a.send(conn, "heartbeat", a.heartbeat(time.Now().UTC())); err != nil { return err }
@@ -158,9 +166,11 @@ func (a *Agent) finishHandshake(conn *websocket.Conn) error {
         case "challenge":
             var challenge protocol.Challenge
             if err := json.Unmarshal(env.Data, &challenge); err != nil { return err }
+            a.log.Debug("received authentication challenge")
             signature := ed25519.Sign(a.private, []byte(challenge.Challenge))
             encoded := base64.RawURLEncoding.EncodeToString(signature)
             if err := a.send(conn, "challenge_response", protocol.ChallengeResponse{KeyID: a.creds.KeyID, Signature: encoded}); err != nil { return err }
+            a.log.Debug("sent authentication challenge response", "key_id", a.creds.KeyID)
         case "authenticated": return nil
         case "error":
             var gatewayErr struct { Code string `json:"code"`; Message string `json:"message"` }
