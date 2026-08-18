@@ -2,6 +2,7 @@ package metrics
 
 import (
     "context"
+    "fmt"
     "os"
     "runtime"
     "time"
@@ -32,39 +33,60 @@ type StorageStats struct {
 }
 
 type SystemMetrics struct {
-    Timestamp int64        `json:"timestamp"`
-    CPU       CPUStats     `json:"cpu"`
-    Memory    MemoryStats  `json:"memory"`
+    Timestamp int64       `json:"timestamp"`
+    CPU       CPUStats    `json:"cpu"`
+    Memory    MemoryStats `json:"memory"`
     Storage   StorageStats `json:"storage"`
 }
 
 func Collect(ctx context.Context) (*SystemMetrics, error) {
-    cpuUsage := float64(0)
-    if values, err := cpu.PercentWithContext(ctx, 500*time.Millisecond, false); err == nil && len(values) > 0 {
-        cpuUsage = values[0]
+    values, err := cpu.PercentWithContext(ctx, 500*time.Millisecond, false)
+    if err != nil {
+        return nil, fmt.Errorf("collect CPU metrics: %w", err)
+    }
+    if len(values) == 0 {
+        return nil, fmt.Errorf("collect CPU metrics: no CPU sample returned")
     }
 
-    memory := MemoryStats{}
-    if value, err := mem.VirtualMemoryWithContext(ctx); err == nil {
-        memory = MemoryStats{TotalBytes: value.Total, UsedBytes: value.Used, FreeBytes: value.Free, UsagePercent: value.UsedPercent}
+    value, err := mem.VirtualMemoryWithContext(ctx)
+    if err != nil {
+        return nil, fmt.Errorf("collect memory metrics: %w", err)
+    }
+    memory := MemoryStats{
+        TotalBytes:   value.Total,
+        UsedBytes:    value.Used,
+        FreeBytes:    value.Free,
+        UsagePercent: value.UsedPercent,
     }
 
     path := "/"
     if runtime.GOOS == "windows" {
         drive := os.Getenv("SystemDrive")
-        if drive == "" { drive = "C:" }
+        if drive == "" {
+            drive = "C:"
+        }
         path = drive + "\\"
     }
 
-    storage := StorageStats{Path: path}
-    if value, err := disk.UsageWithContext(ctx, path); err == nil {
-        storage = StorageStats{Path: path, TotalBytes: value.Total, UsedBytes: value.Used, FreeBytes: value.Free, UsagePercent: value.UsedPercent}
+    storageValue, err := disk.UsageWithContext(ctx, path)
+    if err != nil {
+        return nil, fmt.Errorf("collect storage metrics for %q: %w", path, err)
+    }
+    storage := StorageStats{
+        Path:         path,
+        TotalBytes:   storageValue.Total,
+        UsedBytes:    storageValue.Used,
+        FreeBytes:    storageValue.Free,
+        UsagePercent: storageValue.UsedPercent,
     }
 
     return &SystemMetrics{
         Timestamp: time.Now().Unix(),
-        CPU: CPUStats{UsagePercent: cpuUsage, Cores: runtime.NumCPU()},
-        Memory: memory,
+        CPU: CPUStats{
+            UsagePercent: values[0],
+            Cores:        runtime.NumCPU(),
+        },
+        Memory:  memory,
         Storage: storage,
     }, nil
 }
