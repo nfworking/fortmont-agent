@@ -95,6 +95,7 @@ jobs:
           GOARCH: amd64
         run: |
           mkdir -p dist
+          go mod tidy
           go build \
             -ldflags "-X main.Version=${{ steps.version.outputs.version }}" \
             -o dist/fortmont-agent-linux-amd64 \
