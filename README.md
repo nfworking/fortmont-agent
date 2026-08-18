@@ -56,6 +56,7 @@ Fortmont supports running the agent as a system service on:
 
 * 🪟 Windows
 * 🐧 Linux
+* 🍎 macOS (Coming Soon)
 
 For example:
 
