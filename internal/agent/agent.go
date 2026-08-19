@@ -25,7 +25,7 @@ import (
     "github.com/nfworking/fortmont-agent/internal/protocol"
 )
 
-type Agent struct { cfg config.Config; store identity.Store; creds identity.Credentials; private ed25519.PrivateKey; public ed25519.PublicKey; log *slog.Logger; writeMu sync.Mutex; pluginMu sync.RWMutex; pluginConn *websocket.Conn; plugins *plugins.Manager }
+type Agent struct { cfg config.Config; store identity.Store; creds identity.Credentials; private ed25519.PrivateKey; public ed25519.PublicKey; log *slog.Logger; writeMu sync.Mutex; pluginMu sync.RWMutex; pluginConn *websocket.Conn; plugins *plugins.Manager; pluginRestoreOnce sync.Once; pluginRestoreErr error }
 
 func New(cfg config.Config, log *slog.Logger) (*Agent, error) {
     store := identity.Store{Path: cfg.CredentialsPath}
@@ -75,6 +75,16 @@ func (a *Agent) connectAndRun(ctx context.Context, wsURL, enrollmentToken string
     if a.creds.AgentID != "" && a.creds.KeyID != "" { if err := a.send(conn, "authenticate", protocol.AuthenticateRequest{AgentID: a.creds.AgentID, KeyID: a.creds.KeyID}); err != nil { return err } } else { if enrollmentToken == "" { return errors.New("agent is not enrolled; supply an enrollment token with --token or FORTMONT_ENROLLMENT_TOKEN") }; if err := a.send(conn, "register", a.registration(enrollmentToken)); err != nil { return err } }
     if err := a.finishHandshake(conn); err != nil { a.log.Warn("gateway authentication failed", "gateway", wsURL, "error", err); return err }
     a.log.Info("agent authenticated", "agent_id", a.creds.AgentID, "key_id", a.creds.KeyID, "gateway", wsURL)
+
+    a.pluginRestoreOnce.Do(func() {
+        a.pluginRestoreErr = a.plugins.Restore(ctx)
+        if a.pluginRestoreErr != nil {
+            a.log.Error("failed to restore persisted plugins", "error", a.pluginRestoreErr)
+        } else {
+            a.log.Info("persisted plugins restored")
+        }
+    })
+
     _ = conn.SetReadDeadline(time.Now().Add(a.cfg.PingInterval * 2)); if err := a.send(conn, "heartbeat", a.heartbeat(time.Now().UTC(), latencyMs)); err != nil { return err }
 
     heartbeat := time.NewTicker(a.cfg.HeartbeatInterval); defer heartbeat.Stop(); ping := time.NewTicker(a.cfg.PingInterval); defer ping.Stop(); health := time.NewTicker(a.cfg.GatewayHealthInterval); defer health.Stop()
@@ -86,9 +96,6 @@ func (a *Agent) connectAndRun(ctx context.Context, wsURL, enrollmentToken string
         case result := <-readCh:
             if result.err != nil { return fmt.Errorf("gateway connection lost: %w", result.err) }
             if err := a.handleServerMessage(ctx, result.raw); err != nil {
-                // Plugin/configuration failures are application errors. Keep
-                // the authenticated socket alive so the gateway does not
-                // incorrectly fail over to another node.
                 a.log.Warn("failed to handle gateway message", "gateway", wsURL, "error", err)
             }
         case <-heartbeat.C:
