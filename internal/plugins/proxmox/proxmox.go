@@ -23,7 +23,7 @@ func New(config Config) *Plugin {
 func (p *Plugin) ID() string { return "00000000-0000-0000-0000-000000000001" }
 func (p *Plugin) Slug() string { return "proxmox" }
 func (p *Plugin) Version() string { return "1.0.0" }
-func (p *Plugin) Start(ctx context.Context) error { _, err := p.request(ctx, "/api2/json/version", nil); return err }
+func (p *Plugin) Start(ctx context.Context) error { return p.request(ctx, "/api2/json/version", nil) }
 func (p *Plugin) Stop() error { return nil }
 
 func (p *Plugin) Collect(ctx context.Context) ([]pluginapi.TelemetryMeasurement, error) {
