@@ -85,7 +85,12 @@ func (a *Agent) connectAndRun(ctx context.Context, wsURL, enrollmentToken string
         case <-ctx.Done(): return nil
         case result := <-readCh:
             if result.err != nil { return fmt.Errorf("gateway connection lost: %w", result.err) }
-            if err := a.handleServerMessage(ctx, result.raw); err != nil { return err }
+            if err := a.handleServerMessage(ctx, result.raw); err != nil {
+                // Plugin/configuration failures are application errors. Keep
+                // the authenticated socket alive so the gateway does not
+                // incorrectly fail over to another node.
+                a.log.Warn("failed to handle gateway message", "gateway", wsURL, "error", err)
+            }
         case <-heartbeat.C:
             latencyMu.RLock(); currentLatency := latencyMs; latencyMu.RUnlock(); if err := a.send(conn, "heartbeat", a.heartbeat(time.Now().UTC(), currentLatency)); err != nil { return fmt.Errorf("heartbeat failed: %w", err) }
         case <-ping.C:
