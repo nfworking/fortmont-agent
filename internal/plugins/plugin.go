@@ -1,6 +1,9 @@
 package plugins
 
-import "context"
+import (
+    "context"
+    "github.com/nfworking/fortmont-agent/internal/pluginapi"
+)
 
 type Status string
 
@@ -13,11 +16,7 @@ const (
     StatusStopped Status = "stopped"
 )
 
-type TelemetryMeasurement struct {
-    Name string `json:"name"`
-    Tags map[string]string `json:"tags,omitempty"`
-    Fields map[string]any `json:"fields"`
-}
+type TelemetryMeasurement = pluginapi.TelemetryMeasurement
 
 type Telemetry struct {
     PluginID string
