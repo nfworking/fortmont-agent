@@ -18,22 +18,70 @@ func NewManager(store *SecretStore, status StatusReporter, telemetry TelemetryRe
 
 func (m *Manager) Install(ctx context.Context, pluginID, slug, version string, config map[string]any) error {
     _ = m.report(ctx, pluginID, StatusInstalling, version, "")
-    var p Plugin
-    switch slug {
-    case "proxmox", "proxmoxv2":
-        // proxmoxv2 is the current control-plane plugin slug; the agent's
-        // implementation remains backward-compatible with the original
-        // proxmox slug so existing installations continue to work.
-        p = proxmox.New(proxmox.Config{Endpoint: stringValue(config["endpoint"]), TokenID: stringValue(config["tokenId"]), TokenSecret: stringValue(config["tokenSecret"]), VerifyTLS: boolValue(config["verifyTls"], true), NodeScope: stringValue(config["nodeScope"])})
-    default:
-        err := fmt.Errorf("unsupported plugin: %s", slug)
+    p, err := m.newPlugin(slug, config)
+    if err != nil { _ = m.report(ctx, pluginID, StatusError, version, err.Error()); return err }
+    if err := p.Start(ctx); err != nil { _ = m.report(ctx, pluginID, StatusError, version, err.Error()); return err }
+    if err := m.store.Save(pluginID, config); err != nil { _ = m.report(ctx, pluginID, StatusError, version, err.Error()); return err }
+    if err := m.store.SaveInstallation(Installation{PluginID: pluginID, Slug: slug, Version: version}); err != nil {
         _ = m.report(ctx, pluginID, StatusError, version, err.Error())
+        _ = p.Stop()
         return err
     }
-    if err := m.store.Save(pluginID, config); err != nil { _ = m.report(ctx, pluginID, StatusError, version, err.Error()); return err }
-    if err := p.Start(ctx); err != nil { _ = m.report(ctx, pluginID, StatusError, version, err.Error()); return err }
-    m.mu.Lock(); m.plugins[pluginID] = p; m.mu.Unlock()
+    m.mu.Lock()
+    if previous, exists := m.plugins[pluginID]; exists { _ = previous.Stop() }
+    m.plugins[pluginID] = p
+    m.mu.Unlock()
     return m.report(ctx, pluginID, StatusRunning, version, "")
+}
+
+// Restore loads encrypted plugin configuration and installation metadata from
+// disk and starts every previously installed plugin. Secrets never leave the
+// local SecretStore in plaintext; they are decrypted only for plugin startup.
+// Restore is intentionally called after the WebSocket handshake so status
+// updates can be reported to the control plane.
+func (m *Manager) Restore(ctx context.Context) error {
+    installations, err := m.store.ListInstallations()
+    if err != nil { return err }
+    for _, installation := range installations {
+        if installation.PluginID == "" || installation.Slug == "" { continue }
+        config, err := m.store.Load(installation.PluginID)
+        if err != nil {
+            _ = m.report(ctx, installation.PluginID, StatusError, installation.Version, fmt.Sprintf("load persisted plugin configuration: %v", err))
+            continue
+        }
+        _ = m.report(ctx, installation.PluginID, StatusInstalling, installation.Version, "restoring persisted plugin")
+        p, err := m.newPlugin(installation.Slug, config)
+        if err != nil {
+            _ = m.report(ctx, installation.PluginID, StatusError, installation.Version, err.Error())
+            continue
+        }
+        if err := p.Start(ctx); err != nil {
+            _ = m.report(ctx, installation.PluginID, StatusError, installation.Version, err.Error())
+            _ = p.Stop()
+            continue
+        }
+        m.mu.Lock()
+        if previous, exists := m.plugins[installation.PluginID]; exists { _ = previous.Stop() }
+        m.plugins[installation.PluginID] = p
+        m.mu.Unlock()
+        _ = m.report(ctx, installation.PluginID, StatusRunning, installation.Version, "restored after agent restart")
+    }
+    return nil
+}
+
+func (m *Manager) newPlugin(slug string, config map[string]any) (Plugin, error) {
+    switch slug {
+    case "proxmox", "proxmoxv2":
+        return proxmox.New(proxmox.Config{
+            Endpoint: stringValue(config["endpoint"]),
+            TokenID: stringValue(config["tokenId"]),
+            TokenSecret: stringValue(config["tokenSecret"]),
+            VerifyTLS: boolValue(config["verifyTls"], true),
+            NodeScope: stringValue(config["nodeScope"]),
+        }), nil
+    default:
+        return nil, fmt.Errorf("unsupported plugin: %s", slug)
+    }
 }
 
 func (m *Manager) Run(ctx context.Context, interval time.Duration) {
