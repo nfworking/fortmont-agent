@@ -23,7 +23,9 @@ func (m *Manager) Install(ctx context.Context, pluginID, slug, version string, c
     case "proxmox":
         p = proxmox.New(proxmox.Config{Endpoint: stringValue(config["endpoint"]), TokenID: stringValue(config["tokenId"]), TokenSecret: stringValue(config["tokenSecret"]), VerifyTLS: boolValue(config["verifyTls"], true), NodeScope: stringValue(config["nodeScope"])})
     default:
-        return fmt.Errorf("unsupported plugin: %s", slug)
+        err := fmt.Errorf("unsupported plugin: %s", slug)
+        _ = m.report(ctx, pluginID, StatusError, version, err.Error())
+        return err
     }
     if err := m.store.Save(pluginID, config); err != nil { _ = m.report(ctx, pluginID, StatusError, version, err.Error()); return err }
     if err := p.Start(ctx); err != nil { _ = m.report(ctx, pluginID, StatusError, version, err.Error()); return err }
@@ -40,7 +42,9 @@ func (m *Manager) Run(ctx context.Context, interval time.Duration) {
             measurements, err := entry.plugin.Collect(collectCtx); cancel()
             if err != nil { _ = m.report(ctx, entry.id, StatusDegraded, entry.plugin.Version(), err.Error()); continue }
             if len(measurements) == 0 { continue }
-            _ = m.sendTelemetry(ctx, Telemetry{PluginID: entry.plugin.ID(), PluginSlug: entry.plugin.Slug(), SchemaVersion: 1, Timestamp: time.Now().Unix(), Measurements: measurements})
+            // The control-plane plugin ID is the installation key. Plugin
+            // implementations should not invent their own database IDs.
+            _ = m.sendTelemetry(ctx, Telemetry{PluginID: entry.id, PluginSlug: entry.plugin.Slug(), SchemaVersion: 1, Timestamp: time.Now().Unix(), Measurements: measurements})
             _ = m.report(ctx, entry.id, StatusRunning, entry.plugin.Version(), "")
         }
     }
