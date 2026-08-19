@@ -21,7 +21,7 @@ func New(config Config) *Plugin {
     return &Plugin{config: Config{Endpoint: endpoint, TokenID: config.TokenID, TokenSecret: config.TokenSecret, VerifyTLS: config.VerifyTLS, NodeScope: config.NodeScope}, client: &http.Client{Transport: transport, Timeout: 15 * time.Second}}
 }
 func (p *Plugin) ID() string { return "00000000-0000-0000-0000-000000000001" }
-func (p *Plugin) Slug() string { return "proxmox" }
+func (p *Plugin) Slug() string { return "proxmoxv2" }
 func (p *Plugin) Version() string { return "1.0.0" }
 func (p *Plugin) Start(ctx context.Context) error { return p.request(ctx, "/api2/json/version", nil) }
 func (p *Plugin) Stop() error { return nil }
