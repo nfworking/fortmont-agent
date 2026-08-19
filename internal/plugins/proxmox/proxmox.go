@@ -15,6 +15,32 @@ import (
 type Config struct { Endpoint string; TokenID string; TokenSecret string; VerifyTLS bool; NodeScope string }
 type Plugin struct { config Config; client *http.Client; nodes []string }
 
+type proxmoxNode struct {
+    Node string `json:"node"`
+    ID string `json:"id"`
+    Status string `json:"status"`
+    Type string `json:"type"`
+    Level string `json:"level"`
+    Uptime int64 `json:"uptime"`
+    CPU float64 `json:"cpu"`
+    MaxCPU int64 `json:"maxcpu"`
+    MaxMem uint64 `json:"maxmem"`
+    Mem uint64 `json:"mem"`
+    Disk uint64 `json:"disk"`
+    MaxDisk uint64 `json:"maxdisk"`
+    SSLCertFingerprint string `json:"ssl_fingerprint"`
+}
+
+type proxmoxGuest struct {
+    VMID int64 `json:"vmid"`
+    Name string `json:"name"`
+    Status string `json:"status"`
+    CPU float64 `json:"cpu"`
+    Mem uint64 `json:"mem"`
+    DiskRead uint64 `json:"diskread"`
+    DiskWrite uint64 `json:"diskwrite"`
+}
+
 func New(config Config) *Plugin {
     endpoint := strings.TrimRight(config.Endpoint, "/")
     transport := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: !config.VerifyTLS}} // #nosec G402 - explicitly controlled by the user's plugin profile.
@@ -27,19 +53,56 @@ func (p *Plugin) Start(ctx context.Context) error { return p.request(ctx, "/api2
 func (p *Plugin) Stop() error { return nil }
 
 func (p *Plugin) Collect(ctx context.Context) ([]pluginapi.TelemetryMeasurement, error) {
-    var nodes struct { Data []struct { Node string `json:"node"`; Uptime int64 `json:"uptime"`; CPU float64 `json:"cpu"`; MaxMem uint64 `json:"maxmem"`; Mem uint64 `json:"mem"` } `json:"data"` }
-    if err := p.request(ctx, "/api2/json/nodes", &nodes); err != nil { return nil, err }
-    measurements := make([]pluginapi.TelemetryMeasurement, 0)
-    for _, node := range nodes.Data {
-        measurements = append(measurements, pluginapi.TelemetryMeasurement{Name: "proxmox_node", Tags: map[string]string{"node_id": node.Node, "node_name": node.Node}, Fields: map[string]any{"cpu_usage_percent": node.CPU * 100, "memory_total_bytes": node.MaxMem, "memory_used_bytes": node.Mem, "uptime_seconds": node.Uptime}})
-        var guests struct { Data []struct { VMID int64 `json:"vmid"`; Name string `json:"name"`; Status string `json:"status"`; CPU float64 `json:"cpu"`; Mem uint64 `json:"mem"`; DiskRead uint64 `json:"diskread"`; DiskWrite uint64 `json:"diskwrite"` } `json:"data"` }
+    nodes, err := p.listNodes(ctx)
+    if err != nil { return nil, err }
+
+    measurements := make([]pluginapi.TelemetryMeasurement, 0, len(nodes))
+    for _, node := range nodes {
+        nodeID := node.ID
+        if nodeID == "" { nodeID = "node/" + node.Node }
+        measurements = append(measurements, pluginapi.TelemetryMeasurement{
+            Name: "proxmox_node",
+            Tags: map[string]string{
+                "node_id": nodeID,
+                "node_name": node.Node,
+                "status": node.Status,
+                "type": node.Type,
+            },
+            Fields: map[string]any{
+                "cpu_usage_percent": node.CPU * 100,
+                "cpu_count": node.MaxCPU,
+                "memory_total_bytes": node.MaxMem,
+                "memory_used_bytes": node.Mem,
+                "disk_total_bytes": node.MaxDisk,
+                "disk_used_bytes": node.Disk,
+                "uptime_seconds": node.Uptime,
+            },
+        })
+
+        var guests struct { Data []proxmoxGuest `json:"data"` }
         if err := p.request(ctx, "/api2/json/nodes/"+node.Node+"/qemu", &guests); err == nil {
             for _, guest := range guests.Data {
-                measurements = append(measurements, pluginapi.TelemetryMeasurement{Name: "proxmox_guest", Tags: map[string]string{"node_id": node.Node, "guest_id": fmt.Sprintf("%d", guest.VMID), "guest_name": guest.Name, "guest_type": "qemu"}, Fields: map[string]any{"status": guest.Status, "cpu_usage_percent": guest.CPU * 100, "memory_bytes": guest.Mem, "disk_read_bytes": guest.DiskRead, "disk_write_bytes": guest.DiskWrite}})
+                measurements = append(measurements, pluginapi.TelemetryMeasurement{
+                    Name: "proxmox_guest",
+                    Tags: map[string]string{"node_id": nodeID, "guest_id": fmt.Sprintf("%d", guest.VMID), "guest_name": guest.Name, "guest_type": "qemu", "status": guest.Status},
+                    Fields: map[string]any{"cpu_usage_percent": guest.CPU * 100, "memory_bytes": guest.Mem, "disk_read_bytes": guest.DiskRead, "disk_write_bytes": guest.DiskWrite},
+                })
             }
         }
     }
     return measurements, nil
+}
+
+func (p *Plugin) listNodes(ctx context.Context) ([]proxmoxNode, error) {
+    var response struct { Data []proxmoxNode `json:"data"` }
+    if err := p.request(ctx, "/api2/json/nodes/", &response); err != nil { return nil, err }
+    if p.config.NodeScope == "" || p.config.NodeScope == "*" { return response.Data, nil }
+    wanted := map[string]struct{}{}
+    for _, value := range strings.Split(p.config.NodeScope, ",") { if name := strings.TrimSpace(value); name != "" { wanted[name] = struct{}{} } }
+    if len(wanted) == 0 { return response.Data, nil }
+    filtered := make([]proxmoxNode, 0, len(response.Data))
+    for _, node := range response.Data { if _, ok := wanted[node.Node]; ok { filtered = append(filtered, node) } }
+    return filtered, nil
 }
 
 func (p *Plugin) request(ctx context.Context, path string, out any) error {
