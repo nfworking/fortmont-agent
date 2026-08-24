@@ -121,19 +121,23 @@ func (a *Agent) handleServerMessage(ctx context.Context, raw []byte) error {
         var install protocol.PluginInstall; if err := json.Unmarshal(env.Data, &install); err != nil { return err }
         if install.PluginID == "" || install.PluginSlug == "" || install.ProfileID == "" { return errors.New("invalid plugin installation command") }
         if err := a.plugins.Install(ctx, install.PluginID, install.PluginSlug, install.PluginVersion, install.Config); err != nil { return err }
+    case "plugin.remove":
+        var remove protocol.PluginRemove; if err := json.Unmarshal(env.Data, &remove); err != nil { return err }
+        if remove.PluginID == "" { return errors.New("invalid plugin removal command") }
+        if err := a.plugins.Remove(ctx, remove.PluginID); err != nil { return err }
     }
     return nil
 }
 
 func (a *Agent) reportPluginStatus(ctx context.Context, pluginID string, status plugins.Status, version, message string) error {
     a.pluginMu.RLock(); conn := a.pluginConn; a.pluginMu.RUnlock(); if conn == nil { return errors.New("agent is not connected to a gateway") }
-    return a.send(conn, "plugin_status", protocol.PluginStatus{PluginID: pluginID, Status: string(status), Version: version, Error: message})
+    return a.send(conn, "plugin_status", protocol.PluginStatus{AgentID: a.creds.AgentID, PluginID: pluginID, Status: string(status), Version: version, Error: message})
 }
 
 func (a *Agent) reportPluginTelemetry(ctx context.Context, telemetry plugins.Telemetry) error {
     a.pluginMu.RLock(); conn := a.pluginConn; a.pluginMu.RUnlock(); if conn == nil { return errors.New("agent is not connected to a gateway") }
     measurements := make([]protocol.PluginMeasurement, 0, len(telemetry.Measurements)); for _, measurement := range telemetry.Measurements { measurements = append(measurements, protocol.PluginMeasurement{Name: measurement.Name, Tags: measurement.Tags, Fields: measurement.Fields}) }
-    return a.send(conn, "plugin_data", protocol.PluginData{PluginID: telemetry.PluginID, PluginSlug: telemetry.PluginSlug, SchemaVersion: telemetry.SchemaVersion, Timestamp: telemetry.Timestamp, Measurements: measurements})
+    return a.send(conn, "plugin_data", protocol.PluginData{AgentID: a.creds.AgentID, PluginID: telemetry.PluginID, PluginSlug: telemetry.PluginSlug, SchemaVersion: telemetry.SchemaVersion, Timestamp: telemetry.Timestamp, Measurements: measurements})
 }
 
 func (a *Agent) registration(token string) protocol.RegisterRequest { hostname, _ := os.Hostname(); return protocol.RegisterRequest{EnrollmentToken: token, PublicKey: base64.RawURLEncoding.EncodeToString(a.public), DeviceID: a.creds.DeviceID, Hostname: hostname, LocalIP: localIP(), PublicIP: strings.TrimSpace(os.Getenv("FORTMONT_PUBLIC_IP")), Platform: runtime.GOOS, Architecture: runtime.GOARCH, Version: a.cfg.Version} }
