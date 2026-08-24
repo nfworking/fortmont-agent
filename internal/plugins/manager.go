@@ -66,24 +66,14 @@ func (m *Manager) Remove(ctx context.Context, pluginID string) error {
 	version := ""
 	if exists {
 		version = p.Version()
-	}
-	// The control plane deletes the installation after delivering this command,
-	// so only report the transitional state. A final "uninstalled" status would
-	// race the database deletion and turn a successful removal into a 404.
-	_ = m.report(ctx, pluginID, StatusUninstalling, version, "")
-
-	if exists {
 		if err := p.Stop(); err != nil {
-			_ = m.report(ctx, pluginID, StatusError, version, err.Error())
 			return err
 		}
 	}
 	if err := m.store.Delete(pluginID); err != nil {
-		_ = m.report(ctx, pluginID, StatusError, version, err.Error())
 		return err
 	}
 	if err := m.store.DeleteInstallation(pluginID); err != nil {
-		_ = m.report(ctx, pluginID, StatusError, version, err.Error())
 		return err
 	}
 	return nil
