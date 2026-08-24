@@ -133,7 +133,7 @@ func (m *Manager) newPlugin(slug string, config map[string]any) (Plugin, error) 
 			Endpoint:       stringValue(config["endpoint"]),
 			APIKey:         stringValue(config["apiKey"]),
 			SiteID:         stringValue(config["siteId"]),
-			VerifyTLS:      boolValue(config["verifyTls"], true),
+			VerifyTLS:      boolValue(config["verifyTls"], false),
 			LegacySiteName: stringValue(config["legacySiteName"]),
 		}), nil
 	default:
