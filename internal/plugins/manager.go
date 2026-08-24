@@ -63,9 +63,7 @@ func (m *Manager) Remove(ctx context.Context, pluginID string) error {
 	}
 	m.mu.Unlock()
 
-	version := ""
 	if exists {
-		version = p.Version()
 		if err := p.Stop(); err != nil {
 			return err
 		}
