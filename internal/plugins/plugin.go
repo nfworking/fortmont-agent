@@ -14,6 +14,8 @@ const (
     StatusDegraded Status = "degraded"
     StatusError Status = "error"
     StatusStopped Status = "stopped"
+    StatusUninstalling Status = "uninstalling"
+    StatusUninstalled Status = "uninstalled"
 )
 
 type TelemetryMeasurement = pluginapi.TelemetryMeasurement
