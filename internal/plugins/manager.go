@@ -38,6 +38,7 @@ func (m *Manager) Install(ctx context.Context, pluginID, slug, version string, c
 	}
 	if err := m.store.Save(pluginID, config); err != nil {
 		_ = m.report(ctx, pluginID, StatusError, version, err.Error())
+		_ = p.Stop()
 		return err
 	}
 	if err := m.store.SaveInstallation(Installation{PluginID: pluginID, Slug: slug, Version: version}); err != nil {
@@ -52,6 +53,34 @@ func (m *Manager) Install(ctx context.Context, pluginID, slug, version string, c
 	m.plugins[pluginID] = p
 	m.mu.Unlock()
 	return m.report(ctx, pluginID, StatusRunning, version, "")
+}
+
+func (m *Manager) Remove(ctx context.Context, pluginID string) error {
+	m.mu.Lock()
+	p, exists := m.plugins[pluginID]
+	if exists {
+		delete(m.plugins, pluginID)
+	}
+	m.mu.Unlock()
+
+	version := ""
+	if exists {
+		version = p.Version()
+		if err := p.Stop(); err != nil {
+			_ = m.report(ctx, pluginID, StatusError, version, err.Error())
+			return err
+		}
+	}
+
+	if err := m.store.Delete(pluginID); err != nil {
+		_ = m.report(ctx, pluginID, StatusError, version, err.Error())
+		return err
+	}
+	if err := m.store.DeleteInstallation(pluginID); err != nil {
+		_ = m.report(ctx, pluginID, StatusError, version, err.Error())
+		return err
+	}
+	return m.report(ctx, pluginID, StatusUninstalled, version, "")
 }
 
 // Restore loads encrypted plugin configuration and installation metadata from
@@ -129,8 +158,8 @@ func (m *Manager) Run(ctx context.Context, interval time.Duration) {
 		}, 0, len(m.plugins))
 		for id, p := range m.plugins {
 			snapshot = append(snapshot, struct {
-			id     string
-			plugin Plugin
+				id     string
+				plugin Plugin
 			}{id: id, plugin: p})
 		}
 		m.mu.RUnlock()
