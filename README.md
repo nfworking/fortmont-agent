@@ -1,20 +1,20 @@
-# 🤖 Fortmont Agent
+# 🤖 MeshScale Agent
 
-The **Fortmont Agent** is a lightweight application that runs on a server or computer and securely connects it to **Fortmont**.
+The **MeshScale Agent** is a lightweight application that runs on a server or computer and securely connects it to **MeshScale**.
 
-Its main purpose is to act as a **secure bridge between Fortmont and local infrastructure**. 🌉
+Its main purpose is to act as a **secure bridge between MeshScale and local infrastructure**. 🌉
 
-By default, the agent collects and sends basic information about the device it is running on. Over time, the agent will also support **plugins** that allow Fortmont to connect to and interact with different infrastructure platforms such as **Proxmox, UniFi, and other services**.
+By default, the agent collects and sends basic information about the device it is running on. Over time, the agent will also support **plugins** that allow MeshScale to connect to and interact with different infrastructure platforms such as **Proxmox, UniFi, and other services**.
 
 ## ✨ What does it do?
 
-The Fortmont Agent provides a simple way to connect infrastructure to Fortmont.
+The MeshScale Agent provides a simple way to connect infrastructure to MeshScale.
 
 By default, it:
 
 * 🖥️ Reports basic device information and metrics.
 * 📊 Sends information such as system resource usage and device status.
-* 🔗 Maintains a secure connection with Fortmont.
+* 🔗 Maintains a secure connection with MeshScale.
 * 🔄 Automatically reconnects if the connection is interrupted.
 * ⚙️ Can run quietly in the background as a system service.
 
@@ -22,37 +22,37 @@ As the agent develops, plugins will extend its capabilities.
 
 For example:
 
-* 🖥️ **Proxmox** — Connect Fortmont to virtual machines, containers, and hosts.
-* 🌐 **UniFi** — Connect Fortmont to network equipment and network information.
+* 🖥️ **Proxmox** — Connect MeshScale to virtual machines, containers, and hosts.
+* 🌐 **UniFi** — Connect MeshScale to network equipment and network information.
 * 🔌 **Other plugins** — Add support for additional infrastructure platforms without having to completely rebuild the agent.
 
 This makes the agent flexible while keeping the core application simple.
 
 ## 🚀 Getting Started
 
-When an agent is installed for the first time, Fortmont provides a **one-time enrollment token**.
+When an agent is installed for the first time, MeshScale provides a **one-time enrollment token**.
 
-The token securely registers the device with Fortmont.
+The token securely registers the device with MeshScale.
 
 After registration, the agent remembers its identity and **doesn't need the enrollment token again**.
 
 For example:
 
 ```bash
-fortmont-agent --token <enrollment-token>
+meshscale-agent --token <enrollment-token>
 ```
 
 Once registered, the agent can run normally:
 
 ```bash
-fortmont-agent
+meshscale-agent
 ```
 
 It can also be installed as a background service so it automatically starts with the computer.
 
 ## ⚙️ Running as a Service
 
-Fortmont supports running the agent as a system service on:
+MeshScale supports running the agent as a system service on:
 
 * 🪟 Windows
 * 🐧 Linux
@@ -61,31 +61,31 @@ Fortmont supports running the agent as a system service on:
 For example:
 
 ```text
-fortmont-agent service install --token <enrollment-token>
-fortmont-agent service status
-fortmont-agent service uninstall
+meshscale-agent service install --token <enrollment-token>
+meshscale-agent service status
+meshscale-agent service uninstall
 ```
 
 This allows the agent to run quietly in the background without needing to be manually started.
 
 ## 🌐 Staying Connected
 
-The agent maintains a secure connection to Fortmont so that infrastructure information can be exchanged when needed.
+The agent maintains a secure connection to MeshScale so that infrastructure information can be exchanged when needed.
 
 If the connection is interrupted, the agent automatically attempts to reconnect. 🔄
 
-The agent can also connect through multiple Fortmont connection servers, helping keep the connection available if one server becomes unavailable.
+The agent can also connect through multiple MeshScale connection servers, helping keep the connection available if one server becomes unavailable.
 
 ## 🧩 Plugins
 
-One of the main goals of the Fortmont Agent is to make it **extensible**.
+One of the main goals of the MeshScale Agent is to make it **extensible**.
 
 Instead of building every infrastructure integration directly into the agent, plugins can provide support for different platforms.
 
 For example:
 
 ```text
-                 🤖 Fortmont Agent
+                 🤖 MeshScale Agent
                          │
           ┌──────────────┼──────────────┐
           │              │              │
@@ -108,9 +108,9 @@ Fortmont can also revoke an agent if access needs to be removed.
 
 ## 💡 In Simple Terms
 
-Think of the Fortmont Agent as a **secure connector for infrastructure**.
+Think of the MeshScale Agent as a **secure connector for infrastructure**.
 
-It runs on a server or computer, connects that infrastructure to Fortmont, and provides basic device metrics out of the box.
+It runs on a server or computer, connects that infrastructure to MeshScale, and provides basic device metrics out of the box.
 
 As plugins are added, it can become a gateway to other infrastructure platforms too.
 
@@ -118,7 +118,7 @@ As plugins are added, it can become a gateway to other infrastructure platforms 
        🖥️ Infrastructure
               │
               │
-        🤖 Fortmont Agent
+        🤖 MeshScale Agent
               │
        ┌──────┴──────┐
        │             │
