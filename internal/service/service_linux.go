@@ -15,7 +15,6 @@ const systemdName = "fortmont-agent"
 
 func install(executable, token string) error {
     if strings.TrimSpace(token) == "" { return fmt.Errorf("an enrollment token is required: use --token") }
-    if strings.TrimSpace(os.Getenv("FORTMONT_WS_NODES")) == "" { return fmt.Errorf("FORTMONT_WS_NODES must be set when installing the service") }
     if err := os.MkdirAll(ConfigDir(), 0700); err != nil { return fmt.Errorf("create service config directory: %w", err) }
     if err := os.WriteFile(filepath.Join(ConfigDir(), "enrollment-token"), []byte(strings.TrimSpace(token)+"\n"), 0600); err != nil { return fmt.Errorf("write enrollment token: %w", err) }
     if err := writeServiceEnv(); err != nil { return err }
@@ -43,7 +42,7 @@ WantedBy=multi-user.target
 }
 
 func writeServiceEnv() error {
-    keys := []string{"FORTMONT_WS_NODES", "FORTMONT_VERSION", "FORTMONT_PUBLIC_IP", "FORTMONT_LOG_LEVEL", "FORTMONT_CONNECT_TIMEOUT_SEC", "FORTMONT_RECONNECT_MAX_SEC", "FORTMONT_HEARTBEAT_SEC", "FORTMONT_PING_INTERVAL_SEC", "FORTMONT_GATEWAY_HEALTH_CHECK_SEC"}
+    keys := []string{ "FORTMONT_VERSION", "FORTMONT_PUBLIC_IP", "FORTMONT_LOG_LEVEL", "FORTMONT_CONNECT_TIMEOUT_SEC", "FORTMONT_RECONNECT_MAX_SEC", "FORTMONT_HEARTBEAT_SEC", "FORTMONT_PING_INTERVAL_SEC", "FORTMONT_GATEWAY_HEALTH_CHECK_SEC"}
     var lines []string
     for _, key := range keys { if value := os.Getenv(key); value != "" { lines = append(lines, key+"="+value) } }
     if err := os.WriteFile(filepath.Join(ConfigDir(), "service.env"), []byte(strings.Join(lines, "\n")+"\n"), 0600); err != nil { return fmt.Errorf("write service environment: %w", err) }

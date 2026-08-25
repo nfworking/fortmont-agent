@@ -15,9 +15,7 @@ func install(executable, token string) error {
 	if strings.TrimSpace(token) == "" {
 		return fmt.Errorf("an enrollment token is required: use --token")
 	}
-	if strings.TrimSpace(os.Getenv("FORTMONT_WS_NODES")) == "" {
-		return fmt.Errorf("FORTMONT_WS_NODES must be set when installing the service")
-	}
+	
 	if err := os.MkdirAll(ConfigDir(), 0700); err != nil {
 		return fmt.Errorf("create service config directory: %w", err)
 	}
@@ -82,7 +80,7 @@ func copyFile(source, destination string) error {
 
 func writeServiceEnv() error {
 	keys := []string{
-		"FORTMONT_WS_NODES",
+		
 		"FORTMONT_VERSION",
 		"FORTMONT_PUBLIC_IP",
 		"FORTMONT_LOG_LEVEL",
