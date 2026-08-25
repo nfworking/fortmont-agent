@@ -112,22 +112,6 @@ jobs:
         run: |
           go build -ldflags "-X main.Version=${GITHUB_REF_NAME}" -o dist/meshscale-agent-darwin-arm64 ./cmd/agent
 
-      - name: Create archives
-        shell: bash
-        run: |
-          cd dist
-
-          tar -czf "meshscale-agent-${GITHUB_REF_NAME}-linux-amd64.tar.gz" meshscale-agent-linux-amd64
-          tar -czf "meshscale-agent-${GITHUB_REF_NAME}-linux-arm64.tar.gz" meshscale-agent-linux-arm64
-          tar -czf "meshscale-agent-${GITHUB_REF_NAME}-darwin-amd64.tar.gz" meshscale-agent-darwin-amd64
-          tar -czf "meshscale-agent-${GITHUB_REF_NAME}-darwin-arm64.tar.gz" meshscale-agent-darwin-arm64
-          zip "meshscale-agent-${GITHUB_REF_NAME}-windows-amd64.zip" meshscale-agent-windows-amd64.exe
-          zip "meshscale-agent-${GITHUB_REF_NAME}-windows-arm64.zip" meshscale-agent-windows-arm64.exe
-
-          rm meshscale-agent-linux-amd64 meshscale-agent-linux-arm64
-          rm meshscale-agent-darwin-amd64 meshscale-agent-darwin-arm64
-          rm meshscale-agent-windows-amd64.exe meshscale-agent-windows-arm64.exe
-
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -160,19 +144,24 @@ jobs:
 
             ## Downloads
 
-            Prebuilt binaries are provided for Linux, Windows and macOS on amd64 and arm64 architectures.
+            Prebuilt raw binaries are provided for Linux, Windows and macOS on amd64 and arm64 architectures.
 
             If you want to download and install MeshScale Agent, head over to **https://meshscale.cloud/agent/download**.
 
             ## Supported artifacts
 
-            - Linux amd64
-            - Linux arm64
-            - Windows amd64
-            - Windows arm64
-            - macOS amd64
-            - macOS arm64 (Apple Silicon)
+            - Linux amd64 — `meshscale-agent-linux-amd64`
+            - Linux arm64 — `meshscale-agent-linux-arm64`
+            - Windows amd64 — `meshscale-agent-windows-amd64.exe`
+            - Windows arm64 — `meshscale-agent-windows-arm64.exe`
+            - macOS amd64 — `meshscale-agent-darwin-amd64`
+            - macOS arm64 (Apple Silicon) — `meshscale-agent-darwin-arm64`
 
             This release consolidates the agent, service-management, telemetry, gateway reliability and Phase 2 plugin work merged into `main`.
           files: |
-            dist/*
+            dist/meshscale-agent-linux-amd64
+            dist/meshscale-agent-linux-arm64
+            dist/meshscale-agent-windows-amd64.exe
+            dist/meshscale-agent-windows-arm64.exe
+            dist/meshscale-agent-darwin-amd64
+            dist/meshscale-agent-darwin-arm64
