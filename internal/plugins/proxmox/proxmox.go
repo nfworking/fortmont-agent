@@ -66,10 +66,7 @@ func (p *Plugin) Collect(ctx context.Context) ([]pluginapi.TelemetryMeasurement,
 
     measurements := make([]pluginapi.TelemetryMeasurement, 0, len(resources))
     for _, resource := range resources {
-        if !p.nodeAllowed(resource.Node) {
-            continue
-        }
-
+        if !p.nodeAllowed(resource.Node) { continue }
         switch resource.Type {
         case "node":
             measurements = append(measurements, nodeMeasurement(resource))
@@ -81,7 +78,6 @@ func (p *Plugin) Collect(ctx context.Context) ([]pluginapi.TelemetryMeasurement,
             measurements = append(measurements, networkMeasurement(resource))
         }
     }
-
     return measurements, nil
 }
 
@@ -99,12 +95,7 @@ func nodeMeasurement(resource clusterResource) pluginapi.TelemetryMeasurement {
     if nodeID == "" { nodeID = "node/" + resource.Node }
     return pluginapi.TelemetryMeasurement{
         Name: "proxmox_node",
-        Tags: map[string]string{
-            "node_id": nodeID,
-            "node_name": resource.Node,
-            "status": resource.Status,
-            "type": resource.Type,
-        },
+        Tags: map[string]string{"node_id": nodeID, "node_name": resource.Node, "status": resource.Status, "type": resource.Type},
         Fields: map[string]any{
             "cpu_usage_percent": resource.CPU * 100,
             "cpu_count": resource.MaxCPU,
@@ -119,19 +110,10 @@ func nodeMeasurement(resource clusterResource) pluginapi.TelemetryMeasurement {
 
 func guestMeasurement(resource clusterResource) pluginapi.TelemetryMeasurement {
     guestID := resource.ID
-    if guestID == "" && resource.VMID > 0 {
-        guestID = fmt.Sprintf("%s/%d", resource.Type, resource.VMID)
-    }
+    if guestID == "" && resource.VMID > 0 { guestID = fmt.Sprintf("%s/%d", resource.Type, resource.VMID) }
     return pluginapi.TelemetryMeasurement{
         Name: "proxmox_guest",
-        Tags: map[string]string{
-            "guest_id": guestID,
-            "node_name": resource.Node,
-            "name": resource.Name,
-            "status": resource.Status,
-            "type": resource.Type,
-            "resource_tags": resource.Tags,
-        },
+        Tags: map[string]string{"guest_id": guestID, "node_name": resource.Node, "name": resource.Name, "status": resource.Status, "type": resource.Type, "resource_tags": resource.Tags},
         Fields: map[string]any{
             "vmid": resource.VMID,
             "cpu_usage_percent": resource.CPU * 100,
@@ -156,38 +138,20 @@ func storageMeasurement(resource clusterResource) pluginapi.TelemetryMeasurement
     if storageID == "" { storageID = "storage/" + resource.Node + "/" + resource.Storage }
     return pluginapi.TelemetryMeasurement{
         Name: "proxmox_storage",
-        Tags: map[string]string{
-            "storage_id": storageID,
-            "node_name": resource.Node,
-            "storage_name": resource.Storage,
-            "status": resource.Status,
-            "type": resource.Type,
-            "plugin_type": resource.PluginType,
-            "content": resource.Content,
-        },
-        Fields: map[string]any{
-            "total_bytes": resource.MaxDisk,
-            "used_bytes": resource.Disk,
-            "shared": resource.Shared,
-        },
+        Tags: map[string]string{"storage_id": storageID, "node_name": resource.Node, "storage_name": resource.Storage, "status": resource.Status, "type": resource.Type, "plugin_type": resource.PluginType, "content": resource.Content},
+        Fields: map[string]any{"total_bytes": resource.MaxDisk, "used_bytes": resource.Disk, "shared": resource.Shared},
     }
 }
 
 func networkMeasurement(resource clusterResource) pluginapi.TelemetryMeasurement {
     networkID := resource.ID
     if networkID == "" { networkID = "network/" + resource.Node + "/" + resource.Network }
+    available := int64(0)
+    if resource.Status == "ok" { available = 1 }
     return pluginapi.TelemetryMeasurement{
         Name: "proxmox_network",
-        Tags: map[string]string{
-            "network_id": networkID,
-            "node_name": resource.Node,
-            "network_name": resource.Network,
-            "status": resource.Status,
-            "network_type": resource.NetworkType,
-        },
-        Fields: map[string]any{
-            "available": resource.Status == "ok",
-        },
+        Tags: map[string]string{"network_id": networkID, "node_name": resource.Node, "network_name": resource.Network, "status": resource.Status, "network_type": resource.NetworkType},
+        Fields: map[string]any{"available": available},
     }
 }
 
@@ -201,14 +165,10 @@ func (p *Plugin) request(ctx context.Context, path string, out any) error {
     req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.config.Endpoint+path, nil)
     if err != nil { return err }
     req.Header.Set("Authorization", "PVEAPIToken="+p.config.TokenID+"="+p.config.TokenSecret)
-
     resp, err := p.client.Do(req)
     if err != nil { return err }
     defer resp.Body.Close()
-
-    if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-        return fmt.Errorf("Proxmox API returned HTTP %d", resp.StatusCode)
-    }
+    if resp.StatusCode < 200 || resp.StatusCode >= 300 { return fmt.Errorf("Proxmox API returned HTTP %d", resp.StatusCode) }
     if out == nil { return nil }
     return json.NewDecoder(resp.Body).Decode(out)
 }
